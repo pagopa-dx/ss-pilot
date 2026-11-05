@@ -1,6 +1,6 @@
 # ss-pilot
 
-A small, manually triggered [StepSecurity Harden-Runner Community](https://github.com/step-security/harden-runner)
+A small, manual and pull-request [StepSecurity Harden-Runner Community](https://github.com/step-security/harden-runner)
 pilot on **GitHub-hosted Ubuntu**, initially with `egress-policy: audit`.
 This adds protection to existing GitHub runners; it does not provision a
 StepSecurity runner pool.
@@ -48,6 +48,25 @@ Replace `RUN_ID` with the ID returned by the run list. There are no inputs.
 Each run has one Ubuntu 24.04 job with a ten-minute timeout and bounded HTTPS
 requests. Repeat manually if you want to compare observations between runs;
 baseline creation and anomaly detection are not proven by a single successful run.
+
+## Test pull-request checks
+
+Opening, reopening, or updating a pull request targeting `main` runs the same
+audit job via `pull_request`, without granting write permissions or using
+`pull_request_target`. The workload stays fixed and does not execute PR code.
+Fork PRs may need a maintainer's approval under GitHub Actions settings.
+
+In the PR's **Checks** tab, distinguish the GitHub Actions job
+**Community audit on GitHub-hosted Ubuntu** from a check published by the
+**StepSecurity GitHub App**. A successful workflow job only proves that the
+workflow ran; verify the associated insights as described below.
+
+Dedicated [StepSecurity GitHub Checks](https://github.com/step-security/harden-runner#features-and-pricing-tiers)
+are an **Enterprise** feature. Adding the PR trigger does not install the App,
+activate a trial, or enable that integration. Inspect the actual check publisher
+and record whether a StepSecurity check appears. Its absence is not a failure of
+Community monitoring, and its presence alone does not prove anomaly detection or
+blocking works.
 
 ## Verify actual insights
 
