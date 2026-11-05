@@ -72,6 +72,29 @@ events for both endpoints**. This checks Community monitoring, not every securit
 feature or blocking efficacy. Do not test malicious destinations to exercise the
 Global Block List.
 
+## First verified execution
+
+On **2026-11-05**, [run 42061220366](https://github.com/pagopa-dx/ss-pilot/actions/runs/42061220366)
+completed successfully on GitHub-hosted Ubuntu 24.04.
+The [run-specific network insights](https://app.stepsecurity.io/github/pagopa-dx/ss-pilot/actions/runs/42061220366?tab=network-events)
+were inspected, not just the GitHub job status:
+
+| Destination | Port | Process | Step | Observed status |
+| --- | --- | --- | --- | --- |
+| example.com | 443 | curl | Generate harmless HTTPS traffic | Allowed |
+| api.github.com | 443 | curl | Generate harmless HTTPS traffic | Allowed |
+
+Both requests returned HTTP 200. Both network events were timestamped
+`2026-11-05 16:05:59 GMT` and associated with
+[job 127363276958](https://github.com/pagopa-dx/ss-pilot/actions/runs/42061220366/job/127363276958).
+No access or ingestion blocker remained for this run.
+
+The dashboard showed **Not in baseline - learning** and **99 runs left to
+activate** anomaly detection after this first run. These are observed dashboard
+values, not a contractual threshold or a reason to generate 99 extra runs.
+Community network monitoring is verified; anomaly detection, custom egress
+blocking, and self-hosted compatibility are not.
+
 ## Future integration (not part of this pilot)
 
 An eventual rollout would add Harden-Runner as the first step in each relevant
