@@ -1,7 +1,7 @@
 # ss-pilot
 
 A small, manual and pull-request [StepSecurity Harden-Runner Community](https://github.com/step-security/harden-runner)
-pilot on **GitHub-hosted Ubuntu**, initially with `egress-policy: audit`.
+pilot on **GitHub-hosted Ubuntu**, with separate audit and block jobs.
 This adds protection to existing GitHub runners; it does not provision a
 StepSecurity runner pool.
 
@@ -45,14 +45,14 @@ gh run view RUN_ID --repo pagopa-dx/ss-pilot --log
 ```
 
 Replace `RUN_ID` with the ID returned by the run list. There are no inputs.
-Each run has one Ubuntu 24.04 job with a ten-minute timeout and bounded HTTPS
+Each run has two Ubuntu 24.04 jobs with ten-minute timeouts and bounded HTTPS
 requests. Repeat manually if you want to compare observations between runs;
 baseline creation and anomaly detection are not proven by a single successful run.
 
 ## Test pull-request checks
 
 Opening, reopening, or updating a pull request targeting `main` runs the same
-audit job via `pull_request`, without granting write permissions or using
+audit and block jobs via `pull_request`, without granting write permissions or using
 `pull_request_target`. The workload stays fixed and does not execute PR code.
 Fork PRs may need a maintainer's approval under GitHub Actions settings.
 
@@ -67,6 +67,29 @@ activate a trial, or enable that integration. Inspect the actual check publisher
 and record whether a StepSecurity check appears. Its absence is not a failure of
 Community monitoring, and its presence alone does not prove anomaly detection or
 blocking works.
+
+## Test custom egress blocking
+
+The **Community block on GitHub-hosted Ubuntu** job runs on its own runner.
+Harden-Runner is first, with `egress-policy: block` and an inline allowlist
+containing only `api.github.com:443` for the workload.
+
+The positive control requests `https://api.github.com/zen` and must succeed.
+The negative control requests the harmless `https://example.com/`, which is
+outside the allowlist, and must fail at the transport layer. Any successful
+HTTP response, including an HTTP error response, fails the negative test.
+An unexpected curl error also fails the job; expected transport errors are
+logged explicitly, rather than hidden with `continue-on-error`.
+
+**Do not treat a curl failure as sufficient evidence.** After the post step,
+verify an explicit block event for `example.com:443` in Harden-Runner's agent
+logs or run-specific network insights. Cross-check that the audit job in the
+same run successfully reaches `example.com`, and that the block job reaches
+the allowed GitHub API endpoint. Record both request outcomes and the block
+evidence. If the evidence is unavailable, enforcement remains unverified.
+
+The test does not contact malicious domains, exercise the Global Block List,
+change the audit job's policy, or enable Enterprise GitHub Checks.
 
 ## Verify actual insights
 
