@@ -1,2 +1,88 @@
 # ss-pilot
-StepSecurity Harden-Runner Community pilot on GitHub-hosted runners
+
+A small, manually triggered [StepSecurity Harden-Runner Community](https://github.com/step-security/harden-runner)
+pilot on **GitHub-hosted Ubuntu**, initially with `egress-policy: audit`.
+This adds protection to existing GitHub runners; it does not provision a
+StepSecurity runner pool.
+
+## Scope and prerequisites
+
+- Keep this repository **public** and GitHub Actions enabled. Community is free
+  for public repositories on GitHub-hosted runners.
+- The workflow uses inline configuration, with no StepSecurity API key, Policy
+  Store, repository secrets, checkout, or token permissions. It does not require
+  an Enterprise trial or assume a GitHub App installation is necessary.
+- Harden-Runner is the first step, pinned to the commit for `v2.21.0`.
+  The workload makes unauthenticated HTTPS GET requests to `example.com:443`
+  and `api.github.com:443`, discarding response bodies.
+- Monitoring sends runtime telemetry to StepSecurity so its insights can be
+  inspected. Do not add sensitive workloads or secrets to this pilot.
+- Audit observes egress rather than applying a custom domain allowlist, but
+  **StepSecurity's Global Block List remains enforced even in audit**.
+- The [Community quickstart](https://docs.stepsecurity.io/workspace/getting-started/quickstart-community-tier)
+  states **13,000 Harden-Runner runs per week**; beyond that limit protections
+  are not enforced. That page does not specify the aggregation scope of the
+  limit, so this pilot does not assume it is per repository or organization.
+
+StepSecurity is not listed in the [PagoPA DX Technology Radar](https://dx.pagopa.it/radar.json)
+at the time of setup. This experiment was explicitly approved; it is not a
+production adoption decision.
+
+## Run the pilot
+
+The workflow must first exist on the repository's default branch for
+`workflow_dispatch` to be available.
+
+In [GitHub Actions](https://github.com/pagopa-dx/ss-pilot/actions), select
+**Harden-Runner Community pilot**, then **Run workflow** on `main`.
+Alternatively, with an authenticated GitHub CLI account allowed to run workflows:
+
+```sh
+gh workflow run community-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+gh run list --repo pagopa-dx/ss-pilot --workflow community-pilot.yml --limit 5
+gh run watch RUN_ID --repo pagopa-dx/ss-pilot --exit-status
+gh run view RUN_ID --repo pagopa-dx/ss-pilot --log
+```
+
+Replace `RUN_ID` with the ID returned by the run list. There are no inputs.
+Each run has one Ubuntu 24.04 job with a ten-minute timeout and bounded HTTPS
+requests. Repeat manually if you want to compare observations between runs;
+baseline creation and anomaly detection are not proven by a single successful run.
+
+## Verify actual insights
+
+**A green action or successful HTTP requests are not sufficient.**
+
+1. Wait for the entire job, including Harden-Runner's post step, to finish.
+   Inspect its logs for agent setup, upload errors, skipped monitoring, or limits.
+2. Open the **security insights link emitted by Harden-Runner** in the logs or
+   job summary. Check that the displayed repository, run, and job match this
+   execution; do not substitute a demo or a previous run.
+3. In the network events view, verify outbound connections to both
+   `example.com:443` and `api.github.com:443`, correlated to the
+   **Generate harmless HTTPS traffic** step. Infrastructure and telemetry
+   connections may also appear; the two workload domains are not a complete
+   allowlist.
+4. Record the GitHub run URL, exact insights URL, observed domains/ports,
+   step attribution, and outcome. If access, ingestion, quotas, or monitoring
+   cannot be verified, record the blocker rather than claiming success.
+
+Acceptance requires a successful workload **and inspected, run-specific network
+events for both endpoints**. This checks Community monitoring, not every security
+feature or blocking efficacy. Do not test malicious destinations to exercise the
+Global Block List.
+
+## Future integration (not part of this pilot)
+
+An eventual rollout would add Harden-Runner as the first step in each relevant
+job of the reusable workflows in `pagopa/dx`, benefiting their caller repositories.
+It would not transfer runners from `pagopa-dx` to `pagopa`. Repository visibility,
+runner type, telemetry handling, licensing, and observed egress must be assessed
+before that rollout; no changes to `pagopa/dx` or Azure infrastructure are made here.
+
+**Self-hosted runners require Enterprise even for public repositories.** According
+to the [upstream tier documentation](https://github.com/step-security/harden-runner#features-and-pricing-tiers),
+without it the action can be a successful **no-op**, with no monitoring or insights.
+The upstream documentation describes VM, bare-metal, and ARC support; compatibility
+with self-hosted runners on **Azure Container Apps is not verified** by this pilot
+and must be investigated separately with the Enterprise requirement in mind.

@@ -1,0 +1,56 @@
+name: Harden-Runner Community pilot
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  community-audit:
+    name: Community audit on GitHub-hosted Ubuntu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Generate harmless HTTPS traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in https://example.com/ https://api.github.com/zen; do
+            curl --proto '=https' --tlsv1.2 \
+              --fail --silent --show-error \
+              --connect-timeout 10 --max-time 30 --retry 2 \
+              --output /dev/null \
+              --write-out "Requested ${url}: HTTP %{http_code}\n" \
+              "$url"
+          done
+
+      - name: Record workload and verification checklist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Community audit pilot
+
+          The HTTPS workload completed on GitHub-hosted Ubuntu.
+          No checkout, repository secrets, or authenticated workload requests are used.
+
+          | Workload endpoint | Expected port |
+          | --- | --- |
+          | example.com | 443 |
+          | api.github.com | 443 |
+
+          **A green job is not evidence that monitoring worked.**
+          Open the security insights link emitted by Harden-Runner in its logs or
+          job summary after the job completes. Verify that it refers to this run
+          and job, and that both endpoints appear under the
+          `Generate harmless HTTPS traffic` step.
+
+          Record the run URL, insights URL, observed endpoints, and any monitoring
+          or access errors. If insights cannot be inspected, the pilot remains
+          unverified. Audit still enforces StepSecurity's Global Block List.
+          EOF
