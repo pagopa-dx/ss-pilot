@@ -66,12 +66,21 @@ jobs:
         run: bash .github/scripts/runtime-workload.sh "$PILOT_MODE" "$PILOT_DIR"
 
       - name: Snapshot native local agent events
-        if: ${{ always() && steps.guard.outcome == 'success' }}
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
-          sudo cat /tmp/cargowall-audit.json > "$PILOT_DIR/events.jsonl"
-          sudo cat /tmp/cargowall.log > "$PILOT_DIR/agent.log"
+          mkdir -p "$PILOT_DIR"
+          if sudo test -f /tmp/cargowall-audit.json; then
+            sudo cat /tmp/cargowall-audit.json > "$PILOT_DIR/events.jsonl"
+          else
+            echo "::warning::CargoWall audit records are unavailable; inspect startup diagnostics."
+          fi
+          if sudo test -f /tmp/cargowall.log; then
+            sudo cat /tmp/cargowall.log > "$PILOT_DIR/agent.log"
+          else
+            echo "::warning::CargoWall agent log is unavailable; inspect the guard step."
+          fi
 
       - name: Stop independent DNS capture
         if: ${{ always() && env.PILOT_CAPTURE_PID != '' }}

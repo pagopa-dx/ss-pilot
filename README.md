@@ -195,6 +195,11 @@ audit and fail at transport level in block. Each job additionally requires
 domain-specific **local agent evidence**, not merely a curl error or a green
 action. CargoWall sets `fail-on-unsupported: true` and checks its reported
 support, running PID and readiness file to reject successful no-ops.
+In audit, the excluded domain must still have a denied policy verdict
+(field-cage) or `would_deny: true` with `blocked: false` (CargoWall), while its
+HTTPS request succeeds. An allowed event does not pass that control.
+CargoWall collects any available native logs even if startup fails; missing
+files are reported explicitly, and a failed guard never becomes a successful pilot.
 
 ```sh
 gh workflow run field-cage-pilot.yml --repo pagopa-dx/ss-pilot --ref main

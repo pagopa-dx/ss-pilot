@@ -63,6 +63,24 @@ class RuntimeEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "agent evidence"):
             verify("cargowall", "block", workload, events, dns)
 
+    def test_field_cage_audit_rejects_permissive_policy(self):
+        workload, events, dns = self.sample("field-cage", "audit")
+        events[1]["verdict"] = "ALLOW"
+        with self.assertRaisesRegex(ValueError, "agent evidence"):
+            verify("field-cage", "audit", workload, events, dns)
+
+    def test_cargowall_audit_requires_explicit_would_deny(self):
+        for would_deny in (False, None, "true"):
+            workload, events, dns = self.sample("cargowall", "audit")
+            events[1].update(event_type="connection_allowed", would_deny=would_deny)
+            with self.subTest(would_deny=would_deny), self.assertRaisesRegex(
+                ValueError, "agent evidence"
+            ):
+                verify("cargowall", "audit", workload, events, dns)
+        del events[1]["would_deny"]
+        with self.assertRaisesRegex(ValueError, "agent evidence"):
+            verify("cargowall", "audit", workload, events, dns)
+
     def test_missing_capture_and_vendor_queries_are_rejected(self):
         workload, events, dns = self.sample("field-cage", "audit")
         with self.assertRaisesRegex(ValueError, "plain-DNS"):

@@ -53,7 +53,7 @@ def verify(tool, mode, workload, events, dns):
             ]
             if domain == "api.github.com":
                 matches = [event for event in matches if event.get("verdict") == "ALLOW"]
-            elif mode == "block":
+            else:
                 matches = [
                     event for event in matches
                     if event.get("verdict") in ("DENY(not-in-policy)", "DENY(no-domain)")
@@ -69,6 +69,7 @@ def verify(tool, mode, workload, events, dns):
             matches = [
                 event for event in matches
                 if event.get("blocked") is (mode == "block")
+                and (mode == "block" or event.get("would_deny") is True)
                 and event.get("event_type") in (
                     "connection_allowed", "connection_late_allowed",
                     "connection_blocked", "dns_blocked"
