@@ -1,0 +1,23 @@
+name: Bootstrap controlled Node build
+description: Prepare evidence paths and pinned Node/pnpm without package caches.
+runs:
+  using: composite
+  steps:
+    - name: Prepare evidence directory
+      shell: bash
+      run: mkdir -p "$PILOT_DIR"
+
+    - name: Set up pinned Node
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: 22.17.0
+        package-manager-cache: false
+
+    - name: Set up pinned pnpm
+      shell: bash
+      run: |
+        set -euo pipefail
+        npm install --prefix "$RUNNER_TEMP/pilot-pnpm" --ignore-scripts --no-audit --no-fund pnpm@10.34.9 \
+          2>&1 | tee "$PILOT_DIR/bootstrap.log"
+        echo "$RUNNER_TEMP/pilot-pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+        echo "PILOT_PNPM_STORE=$RUNNER_TEMP/node-build-pnpm-store" >> "$GITHUB_ENV"

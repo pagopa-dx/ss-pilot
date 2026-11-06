@@ -1,0 +1,104 @@
+name: CargoWall offline pilot
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  cargowall:
+    name: CargoWall ${{ matrix.mode }} offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: audit
+            cargowall-mode: audit
+          - mode: block
+            cargowall-mode: enforce
+    env:
+      PILOT_DIR: /tmp/runtime-pilot
+    steps:
+      - name: Check out pilot helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Start independent plain-DNS capture
+        run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
+
+      - name: Start CargoWall without CodeCargo API integration
+        id: guard
+        uses: code-cargo/cargowall-action@e5ed6c46902e295d7a791a15564056e9a3d1aafb # v1.3.8, runtime v1.3.6
+        with:
+          mode: ${{ matrix.cargowall-mode }}
+          offline: true
+          api-url: ""
+          fail-on-unsupported: true
+          skip-actions-api: true
+          audit-summary: false
+          allowed-hosts: |
+            api.github.com:443
+
+      - name: Require an active firewall rather than a successful no-op
+        env:
+          SUPPORTED: ${{ steps.guard.outputs.supported }}
+          GUARD_PID: ${{ steps.guard.outputs.pid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SUPPORTED" != true || ! "$GUARD_PID" =~ ^[0-9]+$ ]] || (( GUARD_PID <= 1 )); then
+            echo "::error::CargoWall did not report an active firewall."
+            exit 1
+          fi
+          sudo kill -0 "$GUARD_PID"
+          sudo test -f /tmp/cargowall-ready
+
+      - name: Run identical harmless HTTPS workload
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: bash .github/scripts/runtime-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+
+      - name: Snapshot native local agent events
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PILOT_DIR"
+          if sudo test -f /tmp/cargowall-audit.json; then
+            sudo cat /tmp/cargowall-audit.json > "$PILOT_DIR/events.jsonl"
+          else
+            echo "::warning::CargoWall audit records are unavailable; inspect startup diagnostics."
+          fi
+          if sudo test -f /tmp/cargowall.log; then
+            sudo cat /tmp/cargowall.log > "$PILOT_DIR/agent.log"
+          else
+            echo "::warning::CargoWall agent log is unavailable; inspect the guard step."
+          fi
+
+      - name: Stop independent DNS capture
+        if: ${{ always() && env.PILOT_CAPTURE_PID != '' }}
+        run: bash .github/scripts/runtime-dns-capture.sh stop "$PILOT_DIR"
+
+      - name: Require workload and agent evidence
+        if: ${{ always() && steps.guard.outcome == 'success' }}
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: |
+          python3 .github/scripts/verify_runtime_evidence.py \
+            --tool cargowall --mode "$PILOT_MODE" --directory "$PILOT_DIR"
+
+      - name: Preserve run-specific local evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: cargowall-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7

@@ -176,6 +176,173 @@ values, not a contractual threshold or a reason to generate 99 extra runs.
 Community network monitoring is verified; anomaly detection, custom egress
 blocking, and self-hosted compatibility are not.
 
+## Compare local-first alternatives
+
+Two additional, independent workflows test the user-approved
+[field-cage](https://github.com/takihito/field-cage) and
+[CargoWall](https://github.com/code-cargo/cargowall-action) experiments.
+Neither is listed in the DX Technology Radar; these are functional pilots,
+not approval for production adoption. Existing StepSecurity workflows are unchanged.
+
+| Workflow | Modes on separate runners | Pinned software |
+| --- | --- | --- |
+| `field-cage-pilot.yml` | audit / block | field-cage action and binary `v0.1.6` |
+| `cargowall-pilot.yml` | audit / block (`enforce`) | action `v1.3.8`, binary `v1.3.6` |
+
+Both use GitHub-hosted Ubuntu 24.04 and the same two harmless HTTPS requests.
+`api.github.com/zen` must succeed in both modes. `example.com` must succeed in
+audit and fail at transport level in block. Each job additionally requires
+domain-specific **local agent evidence**, not merely a curl error or a green
+action. CargoWall sets `fail-on-unsupported: true` and checks its reported
+support, running PID and readiness file to reject successful no-ops.
+In audit, the excluded domain must still have a denied policy verdict
+(field-cage) or `would_deny: true` with `blocked: false` (CargoWall), while its
+HTTPS request succeeds. An allowed event does not pass that control.
+CargoWall collects any available native logs even if startup fails; missing
+files are reported explicitly, and a failed guard never becomes a successful pilot.
+
+```sh
+gh workflow run field-cage-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+gh workflow run cargowall-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+```
+
+As with StepSecurity, manual dispatch requires the files on the default branch;
+the PR trigger can test them before merge. Each workflow has two matrix jobs on
+different runners, with fail-fast disabled. The tools never run together in a job
+or alongside Harden-Runner. Checkout is needed for the shared pilot helpers;
+credentials are not persisted, the only token permission is `contents: read`,
+and no secrets or OIDC permissions are granted.
+
+Download the run's `field-cage-MODE-ATTEMPT` or `cargowall-MODE-ATTEMPT` artifact:
+it retains raw agent logs, native NDJSON events, request outcomes with curl PIDs,
+plain-DNS observations, and `verification.json` when acceptance passes.
+Artifacts expire after seven days. Native formats differ: field-cage records
+connection verdicts (a denied policy verdict in audit is **not** an actual block);
+CargoWall distinguishes `would_deny` from `blocked`. A CargoWall DNS-denial event
+does not provide per-process attribution. Do not assume their coverage or
+attribution equals the StepSecurity portal.
+
+CargoWall explicitly sets `offline: true` and an empty `api-url`, disabling its
+CodeCargo API integration in both modes. field-cage writes reports locally.
+Installation still downloads software and, for field-cage, verifies Sigstore
+signatures. These are **not fully offline jobs**; artifacts are sent to GitHub,
+not Azure. No Application Insights exporter is included.
+
+An independent plain-DNS capture starts before tool installation and ends after
+event collection. Acceptance requires observing both workload domains and no
+StepSecurity/CodeCargo domain in that capture. **This is a limited observation,
+not proof of zero vendor communication:** cached resolution, direct-IP traffic,
+encrypted DNS and traffic after the capture window are not ruled out. CargoWall's
+post step runs later; its API upload and native summary are disabled in this test.
+
+The policies are not identical: CargoWall allows GitHub/Azure infrastructure on
+443, matches subdomains automatically, and permits existing TCP connections by
+default. field-cage's explicit infrastructure domains avoid disrupting runner
+communications, but its domain policy does not restrict ports. Both exclude
+`example.com` from the workload allowlist. field-cage is explicitly stopped with
+an `always()` cleanup step; CargoWall uses its native post cleanup on the ephemeral
+runner. The pilots do not prove bypass resistance, all-protocol coverage,
+performance overhead, or compatibility with Azure Container Apps.
+
+Validate the shared evidence checks locally with:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+```
+
+## Representative DX-aligned Node build
+
+`node-build-pilot.yml` compares all three tools in audit and block, with six
+isolated Ubuntu runners. The fixture in `fixtures/node-build` uses pinned pnpm,
+TypeScript, Vitest and the published `@pagopa/eslint-config`. Script names follow
+the [DX npm script conventions](https://dx.pagopa.it/docs/typescript/npm-scripts);
+pnpm follows the guidance returned by the DX documentation MCP tool.
+The TypeScript override keeps the shared lint configuration and its test plugin
+on the same peer-compatible compiler version.
+
+The protected workload performs a cold-store `pnpm install --frozen-lockfile`,
+DX lint, typecheck, ten tests, compilation and a smoke test of the generated
+JavaScript. The application summarizes **synthetic** payment batches; it uses no
+real payment, personal or secret data. The registry is allowlisted; `example.com`
+is not. The three tools have separate job definitions, not conditionally selected
+actions in one tool matrix: Harden-Runner's pre-step can run even when its main
+step is skipped. Node/pnpm bootstrap precedes the field-cage/CargoWall guards;
+StepSecurity is first and additionally allows `nodejs.org:443` for that bootstrap.
+Its endpoint input uses a folded YAML scalar so the agent receives
+space-separated entries, not newline-separated entries.
+This is not a controlled performance comparison. The plain-DNS capture starts
+after bootstrap and covers the build workload, not StepSecurity's initial setup.
+
+After the legitimate build, the workflow invokes the **postinstall script of an
+installed local fixture dependency** using pnpm. That script makes one bounded
+HTTPS GET to `example.com`, discards its body, and sends no application data,
+environment variables, credentials or custom payload. Its PID, outcome and
+network error are recorded locally.
+
+The initial dependency installation explicitly uses `--ignore-scripts`, and the
+known test hook is then invoked separately. This intentionally deviates from
+DX's recommendation to avoid lifecycle hooks: the hook exists only as a
+controlled runtime-security fixture. **It is not a malicious package and does
+not demonstrate bypassing pnpm's default dependency-build approval controls.**
+In a normal project, keep those controls rather than enabling arbitrary hooks.
+
+| Phase | Audit expectation | Block expectation |
+| --- | --- | --- |
+| Install, lint, typecheck, test, build, smoke | All succeed | All succeed |
+| Approved dependency postinstall | HTTP 200, command succeeds | Network failure, command exits nonzero |
+| Agent evidence | Registry observed; excluded destination recorded | Registry observed; explicit excluded-destination denial |
+
+A successful block **test job** means the install hook failed as intended, not
+that the hook itself completed successfully. Unexpected lifecycle errors or
+absence of an agent event fail the test. Field-cage evidence is correlated by
+TGID to the hook PID. CargoWall DNS events have no process attribution.
+StepSecurity verification uses its local DNS records and node executable, not
+exact PID correlation or inspected portal events.
+
+The isolated runs `42202984046` and `42203434783` selected StepSecurity **AgentAlpha v1.9.0** with
+organization TLS features enabled, rather than the Community agent. These
+representative-build results therefore describe the installed organization's
+current configuration, not a Community-only licensing or feature guarantee.
+No application installation or subscription change was made by these workflows.
+
+### Verified representative-build result
+
+[Run 42203434783](https://github.com/pagopa-dx/ss-pilot/actions/runs/42203434783)
+passed all six cases on head `828521e141a1586ce61318c2b26e862876e7cb5d`
+(effective PR merge revision `2e0accfb44897d6971f8eb2304f009797d6c46f9`).
+Every case completed the dependency install, lint, typecheck, ten tests,
+compilation and compiled smoke test. All six artifacts were downloaded and
+their native events inspected.
+
+| Tool | Audit hook | Block hook | Native block evidence |
+| --- | --- | --- | --- |
+| field-cage | HTTP 200, exit 0 | `EPERM`, exit 1 | `DENY(not-in-policy)`, TGID matches Node PID 2481 |
+| CargoWall offline | HTTP 200, exit 0 | `EAI_AGAIN`, exit 1 | `dns_blocked`, `blocked: true`; no PID in DNS event |
+| StepSecurity, selected AgentAlpha | HTTP 200, exit 0 | `EAI_AGAIN`, exit 1 | `dns-request-dropped`, Node PID 2909 |
+
+Run `42202602311` is not an isolated comparison: conditional Harden-Runner
+pre-steps also installed its agent in the other tools' jobs. Run `42202984046`
+fixed isolation, but StepSecurity block failed before the workload because its
+newline-separated endpoint input was parsed incorrectly. Neither failure is
+counted as a successful block demonstration.
+
+StepSecurity retains audit telemetry and disables block event telemetry; it is
+still not offline. CargoWall remains explicitly offline, and field-cage reports
+locally. Independent DNS observations retain their previously documented limits.
+Each `node-build-TOOL-MODE-ATTEMPT` artifact contains build logs, lifecycle outcome,
+native agent evidence, capture and `verification.json`. Dependency stores and
+`node_modules` are outside the artifact.
+
+This is more representative than two curl requests but remains a small fixture,
+not a production application, Docker build, deployment or bypass-resistance test.
+No changes are made to `pagopa/dx` or Azure. Manual execution, once the workflow
+exists on the default branch:
+
+```sh
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+```
+
 ## Future integration (not part of this pilot)
 
 An eventual rollout would add Harden-Runner as the first step in each relevant

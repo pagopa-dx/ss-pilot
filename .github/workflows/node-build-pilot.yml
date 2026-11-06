@@ -1,0 +1,175 @@
+name: Representative Node build security pilot
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  cargowall-build:
+    name: Node build cargowall ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [audit, block]
+    env:
+      PILOT_DIR: /tmp/node-build-pilot
+    steps:
+      - name: Check out the controlled fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Bootstrap pinned toolchain
+        uses: ./.github/actions/node-build-bootstrap
+
+      - name: Start independent plain-DNS capture
+        run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
+
+      - name: Protect the build with offline CargoWall
+        id: cargowall
+        uses: code-cargo/cargowall-action@e5ed6c46902e295d7a791a15564056e9a3d1aafb # v1.3.8, runtime v1.3.6
+        with:
+          mode: ${{ matrix.mode == 'block' && 'enforce' || 'audit' }}
+          offline: true
+          api-url: ""
+          fail-on-unsupported: true
+          skip-actions-api: true
+          audit-summary: false
+          allowed-hosts: |
+            registry.npmjs.org:443
+
+      - name: Require active offline CargoWall
+        env:
+          SUPPORTED: ${{ steps.cargowall.outputs.supported }}
+          GUARD_PID: ${{ steps.cargowall.outputs.pid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SUPPORTED" != true || ! "$GUARD_PID" =~ ^[0-9]+$ ]] || (( GUARD_PID <= 1 )); then
+            echo "::error::CargoWall did not report an active firewall."
+            exit 1
+          fi
+          sudo kill -0 "$GUARD_PID"
+          sudo test -f /tmp/cargowall-ready
+
+      - name: Install, lint, typecheck, test, build and run approved dependency hook
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: bash .github/scripts/node-build-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+
+      - name: Collect and verify native evidence
+        if: always()
+        uses: ./.github/actions/node-build-evidence
+        with:
+          tool: cargowall
+          mode: ${{ matrix.mode }}
+
+  field-cage-build:
+    name: Node build field-cage ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [audit, block]
+    env:
+      PILOT_DIR: /tmp/node-build-pilot
+    steps:
+      - name: Check out the controlled fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Bootstrap pinned toolchain
+        uses: ./.github/actions/node-build-bootstrap
+
+      - name: Start independent plain-DNS capture
+        run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
+
+      - name: Protect the build with field-cage
+        uses: takihito/field-cage@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+        with:
+          version: v0.1.6
+          mode: ${{ matrix.mode }}
+          allow: |
+            registry.npmjs.org
+            api.github.com
+            github.com
+            *.github.com
+            *.githubapp.com
+            *.githubusercontent.com
+            *.blob.core.windows.net
+            *.trafficmanager.net
+          log-file: ${{ env.PILOT_DIR }}/agent.log
+
+      - name: Install, lint, typecheck, test, build and run approved dependency hook
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: bash .github/scripts/node-build-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+
+      - name: Stop field-cage even if the build fails
+        if: ${{ always() && env.FC_PID != '' }}
+        uses: takihito/field-cage/stop@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+
+      - name: Collect and verify native evidence
+        if: always()
+        uses: ./.github/actions/node-build-evidence
+        with:
+          tool: field-cage
+          mode: ${{ matrix.mode }}
+
+  stepsecurity-build:
+    name: Node build stepsecurity ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [audit, block]
+    env:
+      PILOT_DIR: /tmp/node-build-pilot
+    steps:
+      - name: Protect the build with StepSecurity
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: ${{ matrix.mode }}
+          disable-telemetry: ${{ matrix.mode == 'block' }}
+          allowed-endpoints: >-
+            nodejs.org:443
+            registry.npmjs.org:443
+            api.github.com:443
+            github.com:443
+            *.githubusercontent.com:443
+            *.githubapp.com:443
+            *.blob.core.windows.net:443
+            *.trafficmanager.net:443
+
+      - name: Check out the controlled fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Bootstrap pinned toolchain
+        uses: ./.github/actions/node-build-bootstrap
+
+      - name: Start independent plain-DNS capture
+        run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
+
+      - name: Install, lint, typecheck, test, build and run approved dependency hook
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: bash .github/scripts/node-build-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+
+      - name: Collect and verify native evidence
+        if: always()
+        uses: ./.github/actions/node-build-evidence
+        with:
+          tool: stepsecurity
+          mode: ${{ matrix.mode }}
