@@ -1,3 +1,5 @@
+from pathlib import Path
+import re
 import unittest
 
 from verify_node_build import verify
@@ -76,6 +78,26 @@ class NodeBuildEvidenceTests(unittest.TestCase):
             else:
                 with self.subTest(tool=tool), self.assertRaisesRegex(ValueError, "vendor domain"):
                     verify(tool, "audit", *sample)
+
+    def test_security_actions_are_isolated_in_separate_job_definitions(self):
+        workflow = (Path(__file__).parents[1] / "workflows" / "node-build-pilot.yml").read_text()
+        parts = re.split(
+            r"(?m)^  (cargowall-build|field-cage-build|stepsecurity-build):\n",
+            workflow,
+        )[1:]
+        jobs = dict(zip(parts[::2], parts[1::2]))
+        actions = {
+            "cargowall-build": "code-cargo/cargowall-action@",
+            "field-cage-build": "takihito/field-cage@",
+            "stepsecurity-build": "step-security/harden-runner@",
+        }
+        self.assertEqual(set(jobs), set(actions))
+        for job, action in actions.items():
+            with self.subTest(job=job):
+                self.assertIn(action, jobs[job])
+                for other in set(actions.values()) - {action}:
+                    self.assertNotIn(other, jobs[job])
+        self.assertIn("nodejs.org:443", jobs["stepsecurity-build"])
 
 
 if __name__ == "__main__":

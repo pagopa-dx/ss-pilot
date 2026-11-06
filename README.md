@@ -265,9 +265,12 @@ The protected workload performs a cold-store `pnpm install --frozen-lockfile`,
 DX lint, typecheck, ten tests, compilation and a smoke test of the generated
 JavaScript. The application summarizes **synthetic** payment batches; it uses no
 real payment, personal or secret data. The registry is allowlisted; `example.com`
-is not. Node/pnpm bootstrap and checkout precede the configured guard step;
-Harden-Runner also has a pre-step, whose timing must be distinguished from that
-of the composite guards. This is not a controlled performance comparison.
+is not. The three tools have separate job definitions, not conditionally selected
+actions in one tool matrix: Harden-Runner's pre-step can run even when its main
+step is skipped. Node/pnpm bootstrap precedes the field-cage/CargoWall guards;
+StepSecurity is first and additionally allows `nodejs.org:443` for that bootstrap.
+This is not a controlled performance comparison. The plain-DNS capture starts
+after bootstrap and covers the build workload, not StepSecurity's initial setup.
 
 After the legitimate build, the workflow invokes the **postinstall script of an
 installed local fixture dependency** using pnpm. That script makes one bounded

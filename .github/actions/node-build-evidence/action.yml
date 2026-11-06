@@ -1,0 +1,42 @@
+name: Collect controlled Node build evidence
+description: Preserve source-specific evidence and reject incomplete security experiments.
+inputs:
+  tool:
+    description: One of stepsecurity, field-cage or cargowall.
+    required: true
+  mode:
+    description: Audit or block.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Collect available native evidence
+      if: always()
+      env:
+        PILOT_TOOL: ${{ inputs.tool }}
+      shell: bash
+      run: bash .github/scripts/collect-node-evidence.sh "$PILOT_TOOL" "$PILOT_DIR"
+
+    - name: Stop independent plain-DNS capture
+      if: ${{ always() && env.PILOT_CAPTURE_PID != '' }}
+      shell: bash
+      run: bash .github/scripts/runtime-dns-capture.sh stop "$PILOT_DIR"
+
+    - name: Require legitimate build and lifecycle enforcement evidence
+      if: always()
+      env:
+        PILOT_TOOL: ${{ inputs.tool }}
+        PILOT_MODE: ${{ inputs.mode }}
+      shell: bash
+      run: |
+        python3 .github/scripts/verify_node_build.py \
+          --tool "$PILOT_TOOL" --mode "$PILOT_MODE" --directory "$PILOT_DIR"
+
+    - name: Preserve representative build evidence
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: node-build-${{ inputs.tool }}-${{ inputs.mode }}-${{ github.run_attempt }}
+        path: ${{ env.PILOT_DIR }}
+        if-no-files-found: error
+        retention-days: 7
