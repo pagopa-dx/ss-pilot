@@ -176,6 +176,76 @@ values, not a contractual threshold or a reason to generate 99 extra runs.
 Community network monitoring is verified; anomaly detection, custom egress
 blocking, and self-hosted compatibility are not.
 
+## Compare local-first alternatives
+
+Two additional, independent workflows test the user-approved
+[field-cage](https://github.com/takihito/field-cage) and
+[CargoWall](https://github.com/code-cargo/cargowall-action) experiments.
+Neither is listed in the DX Technology Radar; these are functional pilots,
+not approval for production adoption. Existing StepSecurity workflows are unchanged.
+
+| Workflow | Modes on separate runners | Pinned software |
+| --- | --- | --- |
+| `field-cage-pilot.yml` | audit / block | field-cage action and binary `v0.1.6` |
+| `cargowall-pilot.yml` | audit / block (`enforce`) | action `v1.3.8`, binary `v1.3.6` |
+
+Both use GitHub-hosted Ubuntu 24.04 and the same two harmless HTTPS requests.
+`api.github.com/zen` must succeed in both modes. `example.com` must succeed in
+audit and fail at transport level in block. Each job additionally requires
+domain-specific **local agent evidence**, not merely a curl error or a green
+action. CargoWall sets `fail-on-unsupported: true` and checks its reported
+support, running PID and readiness file to reject successful no-ops.
+
+```sh
+gh workflow run field-cage-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+gh workflow run cargowall-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+```
+
+As with StepSecurity, manual dispatch requires the files on the default branch;
+the PR trigger can test them before merge. Each workflow has two matrix jobs on
+different runners, with fail-fast disabled. The tools never run together in a job
+or alongside Harden-Runner. Checkout is needed for the shared pilot helpers;
+credentials are not persisted, the only token permission is `contents: read`,
+and no secrets or OIDC permissions are granted.
+
+Download the run's `field-cage-MODE-ATTEMPT` or `cargowall-MODE-ATTEMPT` artifact:
+it retains raw agent logs, native NDJSON events, request outcomes with curl PIDs,
+plain-DNS observations, and `verification.json` when acceptance passes.
+Artifacts expire after seven days. Native formats differ: field-cage records
+connection verdicts (a denied policy verdict in audit is **not** an actual block);
+CargoWall distinguishes `would_deny` from `blocked`. A CargoWall DNS-denial event
+does not provide per-process attribution. Do not assume their coverage or
+attribution equals the StepSecurity portal.
+
+CargoWall explicitly sets `offline: true` and an empty `api-url`, disabling its
+CodeCargo API integration in both modes. field-cage writes reports locally.
+Installation still downloads software and, for field-cage, verifies Sigstore
+signatures. These are **not fully offline jobs**; artifacts are sent to GitHub,
+not Azure. No Application Insights exporter is included.
+
+An independent plain-DNS capture starts before tool installation and ends after
+event collection. Acceptance requires observing both workload domains and no
+StepSecurity/CodeCargo domain in that capture. **This is a limited observation,
+not proof of zero vendor communication:** cached resolution, direct-IP traffic,
+encrypted DNS and traffic after the capture window are not ruled out. CargoWall's
+post step runs later; its API upload and native summary are disabled in this test.
+
+The policies are not identical: CargoWall allows GitHub/Azure infrastructure on
+443, matches subdomains automatically, and permits existing TCP connections by
+default. field-cage's explicit infrastructure domains avoid disrupting runner
+communications, but its domain policy does not restrict ports. Both exclude
+`example.com` from the workload allowlist. field-cage is explicitly stopped with
+an `always()` cleanup step; CargoWall uses its native post cleanup on the ephemeral
+runner. The pilots do not prove bypass resistance, all-protocol coverage,
+performance overhead, or compatibility with Azure Container Apps.
+
+Validate the shared evidence checks locally with:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+```
+
 ## Future integration (not part of this pilot)
 
 An eventual rollout would add Harden-Runner as the first step in each relevant

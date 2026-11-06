@@ -1,0 +1,84 @@
+name: field-cage local-first pilot
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  field-cage:
+    name: field-cage ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [audit, block]
+    env:
+      PILOT_DIR: /tmp/runtime-pilot
+    steps:
+      - name: Check out pilot helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Start independent plain-DNS capture
+        run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
+
+      - name: Start field-cage
+        id: guard
+        uses: takihito/field-cage@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+        with:
+          version: v0.1.6
+          mode: ${{ matrix.mode }}
+          allow: |
+            api.github.com
+            github.com
+            *.github.com
+            *.githubapp.com
+            *.githubusercontent.com
+            *.blob.core.windows.net
+            *.trafficmanager.net
+          log-file: ${{ env.PILOT_DIR }}/agent.log
+
+      - name: Run identical harmless HTTPS workload
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: bash .github/scripts/runtime-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+
+      - name: Stop field-cage even when the workload fails
+        if: ${{ always() && env.FC_PID != '' }}
+        uses: takihito/field-cage/stop@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+
+      - name: Export native local agent events
+        if: ${{ always() && env.FC_BIN != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$FC_BIN" report --log "$FC_LOG" --raw --format json > "$PILOT_DIR/events.jsonl"
+          "$FC_BIN" report --log "$FC_LOG" --format markdown --top 0 >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop independent DNS capture
+        if: ${{ always() && env.PILOT_CAPTURE_PID != '' }}
+        run: bash .github/scripts/runtime-dns-capture.sh stop "$PILOT_DIR"
+
+      - name: Require workload and agent evidence
+        if: ${{ always() && steps.guard.outcome == 'success' }}
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: |
+          python3 .github/scripts/verify_runtime_evidence.py \
+            --tool field-cage --mode "$PILOT_MODE" --directory "$PILOT_DIR"
+
+      - name: Preserve run-specific local evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: field-cage-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
