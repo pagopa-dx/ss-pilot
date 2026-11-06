@@ -15,8 +15,9 @@ StepSecurity runner pool.
 - Harden-Runner is the first step, pinned to the commit for `v2.21.0`.
   The workload makes unauthenticated HTTPS GET requests to `example.com:443`
   and `api.github.com:443`, discarding response bodies.
-- Monitoring sends runtime telemetry to StepSecurity so its insights can be
-  inspected. Do not add sensitive workloads or secrets to this pilot.
+- The audit job sends runtime telemetry to StepSecurity so its insights can be
+  inspected. The block job disables event telemetry but is not fully offline.
+  Do not add sensitive workloads or secrets to this pilot.
 - Audit observes egress rather than applying a custom domain allowlist, but
   **StepSecurity's Global Block List remains enforced even in audit**.
 - The [Community quickstart](https://docs.stepsecurity.io/workspace/getting-started/quickstart-community-tier)
@@ -71,7 +72,7 @@ blocking works.
 ## Test custom egress blocking
 
 The **Community block on GitHub-hosted Ubuntu** job runs on its own runner.
-Harden-Runner is first, with `egress-policy: block` and an inline allowlist
+Harden-Runner is first, with `egress-policy: block`, `disable-telemetry: true`, and an inline allowlist
 containing only `api.github.com:443` for the workload.
 
 The positive control requests `https://api.github.com/zen` and must succeed.
@@ -82,8 +83,8 @@ An unexpected curl error also fails the job; expected transport errors are
 logged explicitly, rather than hidden with `continue-on-error`.
 
 **Do not treat a curl failure as sufficient evidence.** After the post step,
-verify an explicit block event for `example.com:443` in Harden-Runner's agent
-logs or run-specific network insights. Cross-check that the audit job in the
+verify an explicit block event for `example.com` in Harden-Runner's agent
+logs. Cross-check that the audit job in the
 same run successfully reaches `example.com`, and that the block job reaches
 the allowed GitHub API endpoint. Record both request outcomes and the block
 evidence. If the evidence is unavailable, enforcement remains unverified.
@@ -91,8 +92,35 @@ evidence. If the evidence is unavailable, enforcement remains unverified.
 The test does not contact malicious domains, exercise the Global Block List,
 change the audit job's policy, or enable Enterprise GitHub Checks.
 
+## Test disabling event telemetry
+
+Only the block job sets `disable-telemetry: true`. Its inline allowlist and
+local enforcement should continue to work, while DNS and network event uploads
+are disabled. The audit job remains the telemetry-enabled control; the flag
+is not an event-telemetry opt-out in audit mode.
+
+Inspect the block job's effective configuration (`disable_telemetry: true`,
+`egress_policy: block`), the action's telemetry-disabled message, and the local
+agent block event. A missing dashboard link alone is not proof that no events
+were sent; dashboard access errors are not proof either.
+
+This is **not an offline mode or a zero-data guarantee**. In the pinned action,
+setup still calls StepSecurity's `/monitor` endpoint with repository/run context
+and job/correlation identifiers. The Community agent also has control-plane
+requests for subscription status, feature flags, and the Global Block List.
+An installed GitHub App has a separate data-access path unaffected by this flag.
+Previous telemetry is not deleted and the audit job's events may still appear
+under the same run in the portal.
+
+Portal verification must distinguish the two jobs. Record whether the block
+job has new network events and whether the audit job still does. Without access
+to the portal or an independent HTTP trace, report configuration and enforcement
+as verified but event-upload suppression as source-supported, not independently
+measured. Raw agent events can still appear in GitHub Actions logs.
+
 ## Verify actual insights
 
+These dashboard checks apply to the telemetry-enabled audit job.
 **A green action or successful HTTP requests are not sufficient.**
 
 1. Wait for the entire job, including Harden-Runner's post step, to finish.
