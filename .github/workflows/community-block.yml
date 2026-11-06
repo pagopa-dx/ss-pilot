@@ -1,0 +1,88 @@
+name: Harden-Runner Community block
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  community-block:
+    name: Community block on GitHub-hosted Ubuntu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: Verify allowed HTTPS traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 \
+            --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 --retry 2 \
+            --output /dev/null \
+            --write-out "Allowed https://api.github.com/zen: HTTP %{http_code}\n" \
+            https://api.github.com/zen
+
+      - name: Verify disallowed HTTPS traffic fails
+        shell: bash
+        run: |
+          set -euo pipefail
+          if curl --proto '=https' --tlsv1.2 \
+            --silent --show-error \
+            --connect-timeout 10 --max-time 15 \
+            --output /dev/null \
+            --write-out "Disallowed https://example.com/: HTTP %{http_code}\n" \
+            https://example.com/; then
+            echo "::error::example.com is outside the allowlist but remained reachable."
+            exit 1
+          else
+            result=$?
+            case "$result" in
+              6|7|28)
+                echo "Expected transport failure for example.com: curl exit ${result}."
+                ;;
+              *)
+                echo "::error::Unexpected curl failure ${result}; inspect the logs."
+                exit 1
+                ;;
+            esac
+          fi
+
+      - name: Record block verification checklist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Community block workflow with telemetry disabled
+
+          | Workload endpoint | Policy | Request outcome |
+          | --- | --- | --- |
+          | api.github.com:443 | Allowed | HTTPS request succeeded |
+          | example.com:443 | Outside allowlist | Transport failure observed |
+
+          **A curl failure alone is not proof of enforcement.**
+          After Harden-Runner's post step completes, inspect its agent logs for
+          a block event for example.com. Cross-check that the separate
+          `Harden-Runner Community audit` workflow run for the same commit
+          successfully reaches example.com.
+
+          This workflow sets disable-telemetry: true with egress-policy: block.
+          Check the effective configuration and telemetry-disabled message.
+          Do not expect network events from this workflow in the dashboard;
+          the audit workflow supplies the telemetry-enabled comparison.
+          This is not offline mode: setup and control-plane requests may remain.
+          Record both run URLs and distinguish events from run metadata.
+
+          This tests an inline allowlist with harmless destinations, not
+          malicious domains or the Global Block List. No secrets or PR code are used.
+          EOF

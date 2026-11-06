@@ -1,0 +1,61 @@
+name: Harden-Runner Community audit
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  community-audit:
+    name: Community audit on GitHub-hosted Ubuntu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+          disable-telemetry: false
+
+      - name: Generate harmless HTTPS traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in https://example.com/ https://api.github.com/zen; do
+            curl --proto '=https' --tlsv1.2 \
+              --fail --silent --show-error \
+              --connect-timeout 10 --max-time 30 --retry 2 \
+              --output /dev/null \
+              --write-out "Requested ${url}: HTTP %{http_code}\n" \
+              "$url"
+          done
+
+      - name: Record audit verification checklist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Community audit workflow
+
+          The HTTPS workload completed on GitHub-hosted Ubuntu.
+          No checkout, repository secrets, or authenticated workload requests are used.
+
+          | Workload endpoint | Expected port |
+          | --- | --- |
+          | example.com | 443 |
+          | api.github.com | 443 |
+
+          **A green job is not evidence that monitoring worked.**
+          After the post step completes, open the security insights link emitted
+          by Harden-Runner. Verify both endpoints under the
+          `Generate harmless HTTPS traffic` step for this run and job.
+
+          This audit workflow sends event telemetry. Compare it with the separate
+          `Harden-Runner Community block` workflow run for the same commit,
+          which disables event telemetry while enforcing its inline allowlist.
+          Record both run URLs; do not mix events from different runs or attempts.
+          Audit still enforces StepSecurity's Global Block List.
+          EOF

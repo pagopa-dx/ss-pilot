@@ -1,7 +1,7 @@
 # ss-pilot
 
 A small, manual and pull-request [StepSecurity Harden-Runner Community](https://github.com/step-security/harden-runner)
-pilot on **GitHub-hosted Ubuntu**, with separate audit and block jobs.
+pilot on **GitHub-hosted Ubuntu**, with separate audit and block workflows.
 This adds protection to existing GitHub runners; it does not provision a
 StepSecurity runner pool.
 
@@ -9,14 +9,14 @@ StepSecurity runner pool.
 
 - Keep this repository **public** and GitHub Actions enabled. Community is free
   for public repositories on GitHub-hosted runners.
-- The workflow uses inline configuration, with no StepSecurity API key, Policy
+- Both workflows use inline configuration, with no StepSecurity API key, Policy
   Store, repository secrets, checkout, or token permissions. It does not require
   an Enterprise trial or assume a GitHub App installation is necessary.
 - Harden-Runner is the first step, pinned to the commit for `v2.21.0`.
   The workload makes unauthenticated HTTPS GET requests to `example.com:443`
   and `api.github.com:443`, discarding response bodies.
-- The audit job sends runtime telemetry to StepSecurity so its insights can be
-  inspected. The block job disables event telemetry but is not fully offline.
+- The audit workflow sends runtime telemetry to StepSecurity so its insights can be
+  inspected. The block workflow disables event telemetry but is not fully offline.
   Do not add sensitive workloads or secrets to this pilot.
 - Audit observes egress rather than applying a custom domain allowlist, but
   **StepSecurity's Global Block List remains enforced even in audit**.
@@ -31,29 +31,34 @@ production adoption decision.
 
 ## Run the pilot
 
-The workflow must first exist on the repository's default branch for
-`workflow_dispatch` to be available.
+Each workflow must first exist on the repository's default branch for
+`workflow_dispatch` to be available. While these files are only in the PR,
+opening or updating that PR triggers both workflows without merging it.
 
 In [GitHub Actions](https://github.com/pagopa-dx/ss-pilot/actions), select
-**Harden-Runner Community pilot**, then **Run workflow** on `main`.
+**Harden-Runner Community audit** or **Harden-Runner Community block**, then
+**Run workflow** on `main`. The workflows are independent and produce distinct
+run IDs and workflow names.
 Alternatively, with an authenticated GitHub CLI account allowed to run workflows:
 
 ```sh
-gh workflow run community-pilot.yml --repo pagopa-dx/ss-pilot --ref main
-gh run list --repo pagopa-dx/ss-pilot --workflow community-pilot.yml --limit 5
+gh workflow run community-audit.yml --repo pagopa-dx/ss-pilot --ref main
+gh workflow run community-block.yml --repo pagopa-dx/ss-pilot --ref main
+gh run list --repo pagopa-dx/ss-pilot --workflow community-audit.yml --limit 5
+gh run list --repo pagopa-dx/ss-pilot --workflow community-block.yml --limit 5
 gh run watch RUN_ID --repo pagopa-dx/ss-pilot --exit-status
 gh run view RUN_ID --repo pagopa-dx/ss-pilot --log
 ```
 
 Replace `RUN_ID` with the ID returned by the run list. There are no inputs.
-Each run has two Ubuntu 24.04 jobs with ten-minute timeouts and bounded HTTPS
+Each workflow run has one Ubuntu 24.04 job with a ten-minute timeout and bounded HTTPS
 requests. Repeat manually if you want to compare observations between runs;
 baseline creation and anomaly detection are not proven by a single successful run.
 
 ## Test pull-request checks
 
 Opening, reopening, or updating a pull request targeting `main` runs the same
-audit and block jobs via `pull_request`, without granting write permissions or using
+audit and block workflows via `pull_request`, without granting write permissions or using
 `pull_request_target`. The workload stays fixed and does not execute PR code.
 Fork PRs may need a maintainer's approval under GitHub Actions settings.
 
@@ -71,9 +76,9 @@ blocking works.
 
 ## Test custom egress blocking
 
-The **Community block on GitHub-hosted Ubuntu** job runs on its own runner.
-Harden-Runner is first, with `egress-policy: block`, `disable-telemetry: true`, and an inline allowlist
-containing only `api.github.com:443` for the workload.
+The **Harden-Runner Community block** workflow has one job on its own runner.
+Harden-Runner is first, with `egress-policy: block`, `disable-telemetry: true`,
+and an inline allowlist containing only `api.github.com:443` for the workload.
 
 The positive control requests `https://api.github.com/zen` and must succeed.
 The negative control requests the harmless `https://example.com/`, which is
@@ -84,19 +89,19 @@ logged explicitly, rather than hidden with `continue-on-error`.
 
 **Do not treat a curl failure as sufficient evidence.** After the post step,
 verify an explicit block event for `example.com` in Harden-Runner's agent
-logs. Cross-check that the audit job in the
-same run successfully reaches `example.com`, and that the block job reaches
+logs. Cross-check that the separate audit workflow run for the same commit
+successfully reaches `example.com`, and that the block workflow reaches
 the allowed GitHub API endpoint. Record both request outcomes and the block
 evidence. If the evidence is unavailable, enforcement remains unverified.
 
 The test does not contact malicious domains, exercise the Global Block List,
-change the audit job's policy, or enable Enterprise GitHub Checks.
+change the audit workflow's policy, or enable Enterprise GitHub Checks.
 
 ## Test disabling event telemetry
 
-Only the block job sets `disable-telemetry: true`. Its inline allowlist and
+Only the block workflow sets `disable-telemetry: true`. Its inline allowlist and
 local enforcement should continue to work, while DNS and network event uploads
-are disabled. The audit job remains the telemetry-enabled control; the flag
+are disabled. The audit workflow remains the telemetry-enabled control; the flag
 is not an event-telemetry opt-out in audit mode.
 
 Inspect the block job's effective configuration (`disable_telemetry: true`,
@@ -109,11 +114,17 @@ setup still calls StepSecurity's `/monitor` endpoint with repository/run context
 and job/correlation identifiers. The Community agent also has control-plane
 requests for subscription status, feature flags, and the Global Block List.
 An installed GitHub App has a separate data-access path unaffected by this flag.
-Previous telemetry is not deleted and the audit job's events may still appear
-under the same run in the portal.
+Previous telemetry is not deleted. Historical `community-pilot.yml` runs had
+two jobs; these new workflows do not share a run ID.
 
-Portal verification must distinguish the two jobs. Record whether the block
-job has new network events and whether the audit job still does. Without access
+Portal verification must distinguish the two workflow runs and attempts.
+For audit, open the link emitted by Harden-Runner and verify the expected events.
+For block, record the GitHub run ID and inspect whether StepSecurity lists that
+run or its metadata; do not infer that it must appear merely because setup calls
+the API. No new network events are expected with telemetry disabled. This comparison
+shows both a policy difference and a telemetry difference: it is not a comparison
+of allowed versus blocked events with telemetry enabled in both workflows.
+Without access
 to the portal or an independent HTTP trace, report configuration and enforcement
 as verified but event-upload suppression as source-supported, not independently
 measured. Raw agent events can still appear in GitHub Actions logs.
