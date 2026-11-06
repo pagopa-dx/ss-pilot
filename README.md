@@ -251,6 +251,66 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s .github/scripts -p 'te
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
 ```
 
+## Representative DX-aligned Node build
+
+`node-build-pilot.yml` compares all three tools in audit and block, with six
+isolated Ubuntu runners. The fixture in `fixtures/node-build` uses pinned pnpm,
+TypeScript, Vitest and the published `@pagopa/eslint-config`. Script names follow
+the [DX npm script conventions](https://dx.pagopa.it/docs/typescript/npm-scripts);
+pnpm follows the guidance returned by the DX documentation MCP tool.
+The TypeScript override keeps the shared lint configuration and its test plugin
+on the same peer-compatible compiler version.
+
+The protected workload performs a cold-store `pnpm install --frozen-lockfile`,
+DX lint, typecheck, ten tests, compilation and a smoke test of the generated
+JavaScript. The application summarizes **synthetic** payment batches; it uses no
+real payment, personal or secret data. The registry is allowlisted; `example.com`
+is not. Node/pnpm bootstrap and checkout precede the configured guard step;
+Harden-Runner also has a pre-step, whose timing must be distinguished from that
+of the composite guards. This is not a controlled performance comparison.
+
+After the legitimate build, the workflow invokes the **postinstall script of an
+installed local fixture dependency** using pnpm. That script makes one bounded
+HTTPS GET to `example.com`, discards its body, and sends no application data,
+environment variables, credentials or custom payload. Its PID, outcome and
+network error are recorded locally.
+
+The initial dependency installation explicitly uses `--ignore-scripts`, and the
+known test hook is then invoked separately. This intentionally deviates from
+DX's recommendation to avoid lifecycle hooks: the hook exists only as a
+controlled runtime-security fixture. **It is not a malicious package and does
+not demonstrate bypassing pnpm's default dependency-build approval controls.**
+In a normal project, keep those controls rather than enabling arbitrary hooks.
+
+| Phase | Audit expectation | Block expectation |
+| --- | --- | --- |
+| Install, lint, typecheck, test, build, smoke | All succeed | All succeed |
+| Approved dependency postinstall | HTTP 200, command succeeds | Network failure, command exits nonzero |
+| Agent evidence | Registry observed; excluded destination recorded | Registry observed; explicit excluded-destination denial |
+
+A successful block **test job** means the install hook failed as intended, not
+that the hook itself completed successfully. Unexpected lifecycle errors or
+absence of an agent event fail the test. Field-cage evidence is correlated by
+TGID to the hook PID. CargoWall DNS events have no process attribution.
+StepSecurity verification uses its local DNS records and node executable, not
+exact PID correlation or inspected portal events.
+
+StepSecurity retains audit telemetry and disables block event telemetry; it is
+still not offline. CargoWall remains explicitly offline, and field-cage reports
+locally. Independent DNS observations retain their previously documented limits.
+Each `node-build-TOOL-MODE-ATTEMPT` artifact contains build logs, lifecycle outcome,
+native agent evidence, capture and `verification.json`. Dependency stores and
+`node_modules` are outside the artifact.
+
+This is more representative than two curl requests but remains a small fixture,
+not a production application, Docker build, deployment or bypass-resistance test.
+No changes are made to `pagopa/dx` or Azure. Manual execution, once the workflow
+exists on the default branch:
+
+```sh
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot --ref main
+```
+
 ## Future integration (not part of this pilot)
 
 An eventual rollout would add Harden-Runner as the first step in each relevant

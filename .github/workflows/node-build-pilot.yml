@@ -1,0 +1,174 @@
+name: Representative Node build security pilot
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  node-build:
+    name: Node build ${{ matrix.tool }} ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [stepsecurity, field-cage, cargowall]
+        mode: [audit, block]
+    env:
+      PILOT_DIR: /tmp/node-build-pilot
+    steps:
+      - name: Check out the controlled fixture
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Bootstrap pinned Node toolchain before protection
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.17.0
+          package-manager-cache: false
+
+      - name: Bootstrap pinned pnpm before protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/pilot-pnpm" --ignore-scripts --no-audit --no-fund pnpm@10.34.9
+          echo "$RUNNER_TEMP/pilot-pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "PILOT_PNPM_STORE=$RUNNER_TEMP/node-build-pnpm-store" >> "$GITHUB_ENV"
+
+      - name: Start independent plain-DNS capture
+        run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
+
+      - name: Protect the build with StepSecurity
+        if: matrix.tool == 'stepsecurity'
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: ${{ matrix.mode }}
+          disable-telemetry: ${{ matrix.mode == 'block' }}
+          allowed-endpoints: |
+            registry.npmjs.org:443
+            api.github.com:443
+            github.com:443
+            *.githubusercontent.com:443
+            *.githubapp.com:443
+            *.blob.core.windows.net:443
+            *.trafficmanager.net:443
+
+      - name: Protect the build with field-cage
+        if: matrix.tool == 'field-cage'
+        uses: takihito/field-cage@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+        with:
+          version: v0.1.6
+          mode: ${{ matrix.mode }}
+          allow: |
+            registry.npmjs.org
+            api.github.com
+            github.com
+            *.github.com
+            *.githubapp.com
+            *.githubusercontent.com
+            *.blob.core.windows.net
+            *.trafficmanager.net
+          log-file: ${{ env.PILOT_DIR }}/agent.log
+
+      - name: Protect the build with offline CargoWall
+        id: cargowall
+        if: matrix.tool == 'cargowall'
+        uses: code-cargo/cargowall-action@e5ed6c46902e295d7a791a15564056e9a3d1aafb # v1.3.8, runtime v1.3.6
+        with:
+          mode: ${{ matrix.mode == 'block' && 'enforce' || 'audit' }}
+          offline: true
+          api-url: ""
+          fail-on-unsupported: true
+          skip-actions-api: true
+          audit-summary: false
+          allowed-hosts: |
+            registry.npmjs.org:443
+
+      - name: Require active offline CargoWall
+        if: matrix.tool == 'cargowall'
+        env:
+          SUPPORTED: ${{ steps.cargowall.outputs.supported }}
+          GUARD_PID: ${{ steps.cargowall.outputs.pid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SUPPORTED" != true || ! "$GUARD_PID" =~ ^[0-9]+$ ]] || (( GUARD_PID <= 1 )); then
+            echo "::error::CargoWall did not report an active firewall."
+            exit 1
+          fi
+          sudo kill -0 "$GUARD_PID"
+          sudo test -f /tmp/cargowall-ready
+
+      - name: Install, lint, typecheck, test, build and run approved dependency hook
+        env:
+          PILOT_MODE: ${{ matrix.mode }}
+        run: bash .github/scripts/node-build-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+
+      - name: Stop field-cage even if the build fails
+        if: ${{ always() && matrix.tool == 'field-cage' && env.FC_PID != '' }}
+        uses: takihito/field-cage/stop@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+
+      - name: Collect available native evidence even after failures
+        if: always()
+        env:
+          PILOT_TOOL: ${{ matrix.tool }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 2
+          case "$PILOT_TOOL" in
+            field-cage)
+              if [[ -n "${FC_BIN:-}" && -f "$PILOT_DIR/agent.log" ]]; then
+                "$FC_BIN" report --log "$PILOT_DIR/agent.log" --raw --format json > "$PILOT_DIR/events.jsonl"
+              else
+                echo "::warning::field-cage native logs are unavailable."
+              fi
+              ;;
+            cargowall)
+              if sudo test -f /tmp/cargowall-audit.json; then
+                sudo cat /tmp/cargowall-audit.json > "$PILOT_DIR/events.jsonl"
+              else
+                echo "::warning::CargoWall native events are unavailable."
+              fi
+              if sudo test -f /tmp/cargowall.log; then
+                sudo cat /tmp/cargowall.log > "$PILOT_DIR/agent.log"
+              else
+                echo "::warning::CargoWall startup diagnostics are unavailable."
+              fi
+              ;;
+            stepsecurity)
+              if sudo test -f /home/agent/agent.log; then
+                sudo cat /home/agent/agent.log > "$PILOT_DIR/agent.log"
+              else
+                echo "::warning::StepSecurity native logs are unavailable."
+              fi
+              ;;
+          esac
+
+      - name: Stop independent plain-DNS capture
+        if: ${{ always() && env.PILOT_CAPTURE_PID != '' }}
+        run: bash .github/scripts/runtime-dns-capture.sh stop "$PILOT_DIR"
+
+      - name: Require legitimate build and lifecycle enforcement evidence
+        if: always()
+        env:
+          PILOT_TOOL: ${{ matrix.tool }}
+          PILOT_MODE: ${{ matrix.mode }}
+        run: |
+          python3 .github/scripts/verify_node_build.py \
+            --tool "$PILOT_TOOL" --mode "$PILOT_MODE" --directory "$PILOT_DIR"
+
+      - name: Preserve representative build evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: node-build-${{ matrix.tool }}-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
