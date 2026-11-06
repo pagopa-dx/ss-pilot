@@ -141,7 +141,7 @@ jobs:
         with:
           egress-policy: ${{ matrix.mode }}
           disable-telemetry: ${{ matrix.mode == 'block' }}
-          allowed-endpoints: |
+          allowed-endpoints: >-
             nodejs.org:443
             registry.npmjs.org:443
             api.github.com:443

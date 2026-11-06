@@ -98,6 +98,7 @@ class NodeBuildEvidenceTests(unittest.TestCase):
                 for other in set(actions.values()) - {action}:
                     self.assertNotIn(other, jobs[job])
         self.assertIn("nodejs.org:443", jobs["stepsecurity-build"])
+        self.assertIn("allowed-endpoints: >-", jobs["stepsecurity-build"])
 
 
 if __name__ == "__main__":

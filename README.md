@@ -269,6 +269,8 @@ is not. The three tools have separate job definitions, not conditionally selecte
 actions in one tool matrix: Harden-Runner's pre-step can run even when its main
 step is skipped. Node/pnpm bootstrap precedes the field-cage/CargoWall guards;
 StepSecurity is first and additionally allows `nodejs.org:443` for that bootstrap.
+Its endpoint input uses a folded YAML scalar so the agent receives
+space-separated entries, not newline-separated entries.
 This is not a controlled performance comparison. The plain-DNS capture starts
 after bootstrap and covers the build workload, not StepSecurity's initial setup.
 
@@ -297,6 +299,12 @@ absence of an agent event fail the test. Field-cage evidence is correlated by
 TGID to the hook PID. CargoWall DNS events have no process attribution.
 StepSecurity verification uses its local DNS records and node executable, not
 exact PID correlation or inspected portal events.
+
+The isolated run `42202984046` selected StepSecurity **AgentAlpha v1.9.0** with
+organization TLS features enabled, rather than the Community agent. These
+representative-build results therefore describe the installed organization's
+current configuration, not a Community-only licensing or feature guarantee.
+No application installation or subscription change was made by these workflows.
 
 StepSecurity retains audit telemetry and disables block event telemetry; it is
 still not offline. CargoWall remains explicitly offline, and field-cage reports
