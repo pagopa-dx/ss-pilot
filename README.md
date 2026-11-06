@@ -300,11 +300,32 @@ TGID to the hook PID. CargoWall DNS events have no process attribution.
 StepSecurity verification uses its local DNS records and node executable, not
 exact PID correlation or inspected portal events.
 
-The isolated run `42202984046` selected StepSecurity **AgentAlpha v1.9.0** with
+The isolated runs `42202984046` and `42203434783` selected StepSecurity **AgentAlpha v1.9.0** with
 organization TLS features enabled, rather than the Community agent. These
 representative-build results therefore describe the installed organization's
 current configuration, not a Community-only licensing or feature guarantee.
 No application installation or subscription change was made by these workflows.
+
+### Verified representative-build result
+
+[Run 42203434783](https://github.com/pagopa-dx/ss-pilot/actions/runs/42203434783)
+passed all six cases on head `828521e141a1586ce61318c2b26e862876e7cb5d`
+(effective PR merge revision `2e0accfb44897d6971f8eb2304f009797d6c46f9`).
+Every case completed the dependency install, lint, typecheck, ten tests,
+compilation and compiled smoke test. All six artifacts were downloaded and
+their native events inspected.
+
+| Tool | Audit hook | Block hook | Native block evidence |
+| --- | --- | --- | --- |
+| field-cage | HTTP 200, exit 0 | `EPERM`, exit 1 | `DENY(not-in-policy)`, TGID matches Node PID 2481 |
+| CargoWall offline | HTTP 200, exit 0 | `EAI_AGAIN`, exit 1 | `dns_blocked`, `blocked: true`; no PID in DNS event |
+| StepSecurity, selected AgentAlpha | HTTP 200, exit 0 | `EAI_AGAIN`, exit 1 | `dns-request-dropped`, Node PID 2909 |
+
+Run `42202602311` is not an isolated comparison: conditional Harden-Runner
+pre-steps also installed its agent in the other tools' jobs. Run `42202984046`
+fixed isolation, but StepSecurity block failed before the workload because its
+newline-separated endpoint input was parsed incorrectly. Neither failure is
+counted as a successful block demonstration.
 
 StepSecurity retains audit telemetry and disables block event telemetry; it is
 still not offline. CargoWall remains explicitly offline, and field-cage reports
