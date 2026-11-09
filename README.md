@@ -343,6 +343,99 @@ exists on the default branch:
 gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot --ref main
 ```
 
+## Comprehensive benchmark protocol
+
+The manually selected benchmark extends the existing fixture without running
+the expensive suite on every PR update. It uses separate job definitions per
+guard and a no-guard baseline. The `full` profile creates **100 case jobs**:
+three fresh-runner functional repetitions and ten fresh-runner performance
+samples for each of the seven baseline/audit/block configurations, plus three
+fault jobs per guard. `smoke` has one functional and one performance sample per
+configuration plus the same faults (23 case jobs). These profiles are not
+statistically equivalent. Each guard has at most three concurrent jobs.
+
+```sh
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot \
+  --ref YOUR_TEST_BRANCH -f benchmark=smoke
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot \
+  --ref YOUR_TEST_BRANCH -f benchmark=full
+```
+
+The functional cases cover allowed/excluded HTTPS, a different port on an
+allowed host, subdomain exactness, a benign redirect, IPv4/IPv6, pre-resolved
+addresses, direct IP, a Node child process, alternate DNS over UDP and Docker
+bridge/host networking. Docker images are assembled locally from runner curl,
+shell, their shared libraries and public CA certificates: no registry pull,
+credentials or application files are needed. All probes are bounded, use
+fixed harmless destinations and discard HTTP bodies. An HTTP 403 response is
+transport reachability, not an enforcement success.
+
+The common intent is exact application domains on port 443, plus documented
+GitHub infrastructure exceptions. Policies cannot always express that intent:
+field-cage does not restrict ports, and CargoWall host rules also match
+subdomains. The report calls reachable excluded traffic a **coverage/policy
+gap**, not automatically a product defect. IPv6 or an endpoint that does not
+work without a guard cannot prove blocking.
+
+Performance jobs measure install, DX lint, typecheck, ten tests, compilation
+and compiled smoke using GNU time. The first install uses an empty pnpm store;
+the second explicitly reinstalls offline from that store on the same runner.
+The lifecycle probe is excluded from summed phase timings. Reports retain
+wall time, user/system CPU and maximum command RSS, stratified by runner image,
+kernel, CPU model and vCPU count. Maximum command RSS is not total concurrent
+job/container memory. Small samples and heterogeneous hosts do not justify a
+performance ranking or a reliable p95.
+
+Fault jobs deliberately supply a missing release/binary or invalid policy,
+terminate the verified guard PID on an ephemeral runner, and exercise an actual
+GitHub step deadline plus a bounded child-process timeout. These are isolated
+from performance jobs. Cancellation has its own three-job run:
+
+```sh
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot \
+  --ref YOUR_TEST_BRANCH -f benchmark=cancellation
+# Wait for all three "Wait for an externally requested GitHub job cancellation"
+# steps to be running, then cancel only that dedicated run:
+gh run cancel RUN_ID --repo pagopa-dx/ss-pilot
+```
+
+Never cancel the full benchmark to exercise this case. A cancelled run or
+failed injected startup is not, by itself, a tool failure. Check the marker,
+guard outcome, application gate and native cleanup steps. Guard exit can leave
+residual protection or a restart; the report does not infer fail-closed
+network enforcement merely because a subsequent request times out.
+
+A pinned repository-owned observer starts in an action pre-step before guard
+setup, captures packet text metadata and samples socket/process metadata,
+then stops after native post actions. It does not collect HTTP bodies, decrypt
+TLS or read arbitrary environment variables. Runner boot and action download
+precede this observer. Uploaded snapshots precede native cleanup; the later
+`BENCHMARK_OBSERVER_FINAL` record in each job log retains vendor DNS names,
+destination endpoints, observer health, process names and explicit truncation.
+Cached DNS, unidentified vendor IPs and encrypted traffic still rule out a
+zero-egress guarantee.
+
+Download all `benchmark-*` artifacts from one run and aggregate them:
+
+```sh
+python3 .github/scripts/benchmark_report.py \
+  --directory PATH_TO_ARTIFACTS --profile full \
+  --jobs PATH_TO_JOBS_JSON --output PATH_TO_REPORT
+```
+
+`PATH_TO_JOBS_JSON` is a JSON array from the Actions jobs REST endpoint, including
+steps and their final conclusions; it can be omitted for artifact-only analysis.
+The report emits `passed`, `failed`, `unsupported` and `inconclusive`, requires
+matching unprotected controls for denials, rejects incomplete/duplicate cohorts
+and preserves native observations. **Green collection jobs mean the harness
+completed, not that every security requirement passed.** Missing diagnostics or
+uncorrelated network errors never become verified denials.
+
+The official pinned StepSecurity action has no supported input to force the
+Community agent. Record the actual agent build; an Enterprise-selected run
+cannot establish Community behavior. This benchmark does not change the
+organization's App, subscription, Azure infrastructure or `pagopa/dx`.
+
 ## Future integration (not part of this pilot)
 
 An eventual rollout would add Harden-Runner as the first step in each relevant

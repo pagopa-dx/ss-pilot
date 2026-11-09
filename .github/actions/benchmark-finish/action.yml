@@ -1,0 +1,41 @@
+name: Preserve benchmark evidence
+description: Stop field-cage when still active, collect diagnostics and report harness completion explicitly.
+runs:
+  using: composite
+  steps:
+    - name: Determine whether field-cage is still running
+      if: ${{ always() && env.BENCHMARK_TOOL == 'field-cage' && env.FC_PID != '' }}
+      shell: bash
+      run: |
+        if sudo kill -0 "$FC_PID" 2>/dev/null; then
+          echo "BENCHMARK_STOP_FIELD=true" >> "$GITHUB_ENV"
+        else
+          echo "field-cage already exited; preserving fault diagnostics."
+        fi
+
+    - name: Stop field-cage
+      if: ${{ always() && env.BENCHMARK_STOP_FIELD == 'true' }}
+      uses: takihito/field-cage/stop@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
+
+    - name: Collect native diagnostics
+      if: always()
+      shell: bash
+      run: |
+        mkdir -p "$PILOT_DIR"
+        if [[ "$BENCHMARK_TOOL" != baseline ]]; then
+          bash .github/scripts/collect-node-evidence.sh "$BENCHMARK_TOOL" "$PILOT_DIR"
+        fi
+
+    - name: Verify workload and retain machine-readable result
+      if: always()
+      shell: bash
+      run: python3 .github/scripts/benchmark_runner.py finalize
+
+    - name: Preserve the pre-post evidence snapshot
+      if: always()
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      with:
+        name: benchmark-${{ env.BENCHMARK_TOOL }}-${{ env.BENCHMARK_MODE }}-${{ env.BENCHMARK_KIND }}-${{ env.BENCHMARK_ITERATION }}-${{ github.run_attempt }}
+        path: ${{ env.PILOT_DIR }}
+        if-no-files-found: error
+        retention-days: 7

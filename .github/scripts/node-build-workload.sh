@@ -14,18 +14,33 @@ fi
 mkdir -p "$evidence_dir"
 cd fixtures/node-build
 
+run_stage() {
+  local stage="$1"
+  shift
+  if [[ "${BENCHMARK_MEASURE:-false}" == true ]]; then
+    /usr/bin/time --quiet \
+      -f '{"wall_seconds":%e,"user_seconds":%U,"system_seconds":%S,"max_rss_kb":%M}' \
+      -o "$evidence_dir/$stage.resources.json" "$@" 2>&1 | tee "$evidence_dir/$stage.log"
+  else
+    "$@" 2>&1 | tee "$evidence_dir/$stage.log"
+  fi
+}
+
 pnpm --version | tee "$evidence_dir/pnpm-version.log"
 node --version | tee "$evidence_dir/node-version.log"
 
 # Keep the legitimate build separate from the one explicitly approved lifecycle probe.
-pnpm install --frozen-lockfile --ignore-scripts --store-dir "${PILOT_PNPM_STORE:?Specify a fresh pnpm store}" \
-  2>&1 | tee "$evidence_dir/install.log"
-pnpm lint:check 2>&1 | tee "$evidence_dir/lint.log"
-pnpm typecheck 2>&1 | tee "$evidence_dir/typecheck.log"
-pnpm test 2>&1 | tee "$evidence_dir/test.log"
-pnpm build 2>&1 | tee "$evidence_dir/build.log"
+install_args=(install --frozen-lockfile --ignore-scripts --store-dir "${PILOT_PNPM_STORE:?Specify a fresh pnpm store}")
+if [[ "${PILOT_OFFLINE_INSTALL:-false}" == true ]]; then
+  install_args+=(--offline --force)
+fi
+run_stage install pnpm "${install_args[@]}"
+run_stage lint pnpm lint:check
+run_stage typecheck pnpm typecheck
+run_stage test pnpm test
+run_stage build pnpm build
 test -s dist/payment.js
-node --input-type=module - <<'JS' | tee "$evidence_dir/smoke.log"
+run_stage smoke node --input-type=module - <<'JS'
 import assert from "node:assert/strict";
 import { summarizePayments } from "./dist/payment.js";
 assert.deepEqual(
