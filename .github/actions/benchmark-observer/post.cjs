@@ -15,9 +15,15 @@ async function main() {
   const final = JSON.parse(fs.readFileSync(file, "utf8"));
   const network = fs.readFileSync(path.join(root, "network.log"), "utf8");
   const vendorNames = [...new Set(network.match(/\b[\w.-]*(?:stepsecurity\.io|codecargo\.com)\.?/gi) || [])];
+  const destinations = [...new Set(network.split("\n").flatMap((line) => {
+    const match = line.match(/\bIP6? \S+ > (\S+):/);
+    return match ? [match[1]] : [];
+  }))];
   const processes = execFileSync("ps", ["-eo", "pid,ppid,comm"], { encoding: "utf8" });
   console.log("BENCHMARK_OBSERVER_FINAL " + JSON.stringify({
     ...final, vendor_dns_names: vendorNames, process_snapshot: processes,
+    destination_endpoints: destinations.slice(0, 2000),
+    destination_list_truncated: destinations.length > 2000,
     artifact_window: "The uploaded snapshot precedes native post steps; this final record is retained in the job log.",
   }));
   if (final.errors.length) throw new Error(`Observer incomplete: ${final.errors.join("; ")}`);
