@@ -1,5 +1,5 @@
 name: Preserve benchmark evidence
-description: Stop field-cage when still active, collect diagnostics and report harness completion explicitly.
+description: Collect local diagnostics without downloading actions after a fault.
 runs:
   using: composite
   steps:

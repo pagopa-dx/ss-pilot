@@ -31,6 +31,19 @@ def seconds(step):
 
 def aggregate(root, jobs, profile):
     records, missing = load_results(root)
+    supervision_path = root / "completion-supervision.json"
+    supervision = json.loads(supervision_path.read_text()) if supervision_path.exists() else {}
+    supervised_ids = {job["id"] for job in supervision.get("unfinished", [])}
+    reporting_failures = [
+        {"id": job["id"], "job": job["name"], "reason": "Native post steps and Complete job finished, but the runner did not report job completion"}
+        for job in jobs
+        if job["id"] in supervised_ids or (
+            job.get("status") != "completed" and any(
+                step["name"] == "Complete job" and step["status"] == "completed"
+                for step in job.get("steps", [])
+            )
+        )
+    ]
     baseline = defaultdict(list)
     for record in records:
         if record["tool"] == "baseline":
@@ -79,7 +92,7 @@ def aggregate(root, jobs, profile):
         if kind in ("startup-failure", "agent-exit", "timeout", "cancellation"):
             if kind == "startup-failure":
                 status = "passed" if record.get("startup_failed") and not record.get("workload_started") else "failed"
-                reason = "Invalid startup must fail and must not start the application"
+                reason = "Invalid startup must fail and must not start the application" if status == "passed" else "Invalid configuration was accepted; an actual startup failure was not induced"
             elif kind == "agent-exit":
                 fault = record["fault"]
                 excluded = next((item for item in fault.get("probes", []) if not item["allowed"]), {})
@@ -97,7 +110,16 @@ def aggregate(root, jobs, profile):
             else:
                 status = "passed" if record.get("waiting_marker") and record.get("job_status") == "cancelled" else "inconclusive"
                 reason = "Cancellation marker and GitHub cancellation state; inspect native post cleanup independently"
-            faults.append({"tool": tool, "kind": kind, "status": status, "reason": reason, "artifact": record["artifact"]})
+            fault_result = {"tool": tool, "kind": kind, "status": status, "reason": reason, "artifact": record["artifact"]}
+            if kind == "agent-exit":
+                fault_result["application_gate"] = "unsupported" if fault.get("injected") is False else "passed" if fault["guard_gate_rejected"] else "failed"
+                fault_result["residual_network_enforcement"] = "unsupported" if fault.get("injected") is False else "failed" if excluded.get("reached") else "inconclusive"
+                suffix = f"Benchmark {tool} {mode} {kind} {record['iteration']}"
+                reporting_failed = any(item["job"].endswith(suffix) for item in reporting_failures)
+                fault_result["runner_reporting"] = "failed" if reporting_failed else "not observed failing"
+                if reporting_failed:
+                    fault_result.update(status="failed", reason="Application gate rejected the dead agent, but DNS-dependent uploads/job completion failed; residual packet enforcement is not proven")
+            faults.append(fault_result)
     measurements = []
     for (tool, mode, cache, environment), samples in sorted(performance.items(), key=lambda entry: str(entry[0])):
         metrics = {
@@ -117,13 +139,14 @@ def aggregate(root, jobs, profile):
             measurement["exploratory_wall_ratio"] = measurement["metrics"]["wall_seconds"]["median"] / reference if reference else None
     cleanup = []
     for job in jobs:
-        if "Benchmark " not in job.get("name", ""):
+        if "Benchmark " not in job.get("name", "") or job.get("conclusion") == "skipped":
             continue
         steps = job.get("steps", [])
         cleanup.append({
             "job": job["name"], "id": job["id"], "conclusion": job.get("conclusion"),
-            "guard_setup_seconds": sum(seconds(step) or 0 for step in steps if "Start " in step.get("name", "")),
+            "guard_setup_seconds": sum(seconds(step) or 0 for step in steps if step.get("name", "").startswith(("Pre Start ", "Start "))),
             "post_steps": [{"name": step["name"], "conclusion": step.get("conclusion")} for step in steps if step.get("name", "").startswith("Post ")],
+            "explicit_cleanup_steps": [{"name": step["name"], "conclusion": step.get("conclusion")} for step in steps if step.get("name", "").startswith("Stop field-cage")],
         })
     sizes = (1, 1) if profile == "smoke" else (3, 10)
     expected_keys = set()
@@ -146,15 +169,34 @@ def aggregate(root, jobs, profile):
     for tool in ("baseline", "field-cage", "cargowall", "stepsecurity"):
         cohort = [item for item in observers if f"Benchmark {tool} " in item["job"]]
         finals = [record for item in cohort for record in item["records"]]
+        modes = []
+        for mode in ("audit", "block"):
+            selected = [record for item in cohort if f"Benchmark {tool} {mode} " in item["job"] for record in item["records"]]
+            if selected:
+                modes.append({
+                    "mode": mode, "final_job_records": len(selected),
+                    "vendor_dns_names": sorted({name for record in selected for name in record.get("vendor_dns_names", [])}),
+                })
         privacy.append({
             "tool": tool, "jobs_with_final_record": sum(bool(item["records"]) for item in cohort),
             "jobs_without_final_record": sum(not item["records"] for item in cohort),
             "vendor_dns_names": sorted({name for record in finals for name in record.get("vendor_dns_names", [])}),
             "observer_errors": [error for record in finals for error in record.get("errors", [])],
             "truncated_destination_lists": sum(record.get("destination_list_truncated", False) for record in finals),
+            "modes": modes,
             "limits": "DNS names identify observed destinations, not transmitted TLS payloads or all vendor IPs.",
         })
+    run_path = root / "run.json"
+    run = json.loads(run_path.read_text()) if run_path.exists() else {}
+    if run:
+        coherent = coherent and all(
+            record.get("run_id") == str(run["id"])
+            and record.get("attempt") == str(run["run_attempt"])
+            and record.get("sha") == run["head_sha"]
+            for record in records
+        )
     return {
+        "source": {key: run.get(key) for key in ("id", "html_url", "head_sha", "run_attempt", "status", "conclusion")},
         "profile": profile, "expected_case_jobs": expected, "result_artifacts": len(records),
         "missing_result_artifacts": missing,
         "log_recovered_results": [record["artifact"] for record in records if record.get("evidence_source") == "job-log"],
@@ -164,6 +206,7 @@ def aggregate(root, jobs, profile):
         "builds": builds, "cases": cases, "faults": faults,
         "case_status_counts": dict(Counter(case["status"] for case in cases)),
         "performance": measurements, "cleanup": cleanup,
+        "reporting_failures": reporting_failures, "completion_supervision": supervision,
         "privacy": privacy,
         "stepsecurity_agent_builds": sorted(set(tier)),
         "community_only_test": "inconclusive: the pinned action exposes no supported input to force the Community agent; no organization license or App was changed",
@@ -183,6 +226,7 @@ def markdown(report):
         "# Runtime benchmark results", "",
         f"Profile: **{report['profile']}**. Collected {report['result_artifacts']}/{report['expected_case_jobs']} expected result artifacts.",
         f"Coverage complete: **{report['coverage_complete']}**. Harness success is not a blanket security pass.", "",
+        f"GitHub run: {report['source'].get('html_url')}. Server status: **{report['source'].get('status')} / {report['source'].get('conclusion')}**.", "",
         "## Functional cases", "",
         "| Tool | Mode | Case | Passed | Failed | Unsupported | Inconclusive |",
         "| --- | --- | --- | --- | --- | --- | --- |",
@@ -194,15 +238,26 @@ def markdown(report):
         lines.append(f"| {tool} | {mode} | {case} | " + " | ".join(str(counts[key]) for key in ("passed", "failed", "unsupported", "inconclusive")) + " |")
     lines.extend(["", "## Fault cases", "", "| Tool | Fault | Status | Meaning |", "| --- | --- | --- | --- |"])
     for fault in report["faults"]:
-        lines.append(f"| {fault['tool']} | {fault['kind']} | {fault['status']} | {fault['reason']} |")
+        reason = fault["reason"].replace("\n", " ").replace("|", "\\|")
+        lines.append(f"| {fault['tool']} | {fault['kind']} | {fault['status']} | {reason} |")
+    lines.extend(["", "## Completion and evidence reliability", ""])
+    lines.extend("- " + item["job"] + ": " + item["reason"] for item in report["reporting_failures"])
+    if not report["reporting_failures"]:
+        lines.append("No job-completion reporting failure was observed.")
+    if report["log_recovered_results"]:
+        lines.append("Results recovered from job logs rather than uploaded raw artifacts: " + ", ".join(report["log_recovered_results"]) + ". Native/packet files may be unavailable.")
     lines.extend(["", "## Performance by matched environment", "", "| Tool | Mode | Cache | Samples | Median build seconds | Median install seconds | Image / CPU |", "| --- | --- | --- | --- | --- | --- | --- |"])
     for sample in report["performance"]:
         lines.append(f"| {sample['tool']} | {sample['mode']} | {sample['cache']} | {sample['samples']} | {sample['metrics']['wall_seconds']['median']:.2f} | {sample['metrics']['install_seconds']['median']:.2f} | {sample['environment'][0]} / {sample['environment'][2]} |")
     lines.extend(["", "## Tier and interpretation", "", report["community_only_test"], ""])
     lines.extend(report["stepsecurity_agent_builds"])
-    lines.extend(["", "## Independent observer", "", "| Tool | Final job records | Missing final records | Vendor DNS names | Observer errors |", "| --- | --- | --- | --- | --- |"])
+    lines.extend(["", "## Independent observer", "", "| Tool | Mode | Final job records | Vendor DNS names |", "| --- | --- | --- | --- |"])
     for item in report["privacy"]:
-        lines.append(f"| {item['tool']} | {item['jobs_with_final_record']} | {item['jobs_without_final_record']} | {', '.join(item['vendor_dns_names']) or 'none observed'} | {len(item['observer_errors'])} |")
+        for mode in item["modes"]:
+            lines.append(f"| {item['tool']} | {mode['mode']} | {mode['final_job_records']} | {', '.join(mode['vendor_dns_names']) or 'none observed'} |")
+    lines.extend(["", "| Tool | Missing final records | Observer errors | Truncated destination lists |", "| --- | --- | --- | --- |"])
+    for item in report["privacy"]:
+        lines.append(f"| {item['tool']} | {item['jobs_without_final_record']} | {len(item['observer_errors'])} | {item['truncated_destination_lists']} |")
     lines.extend(["", *["- " + item for item in report["limits"]], ""])
     if report["missing_result_artifacts"]:
         lines.extend(["## Missing/incomplete results", "", *["- " + item for item in report["missing_result_artifacts"]]])

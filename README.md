@@ -415,16 +415,20 @@ destination endpoints, observer health, process names and explicit truncation.
 Cached DNS, unidentified vendor IPs and encrypted traffic still rule out a
 zero-egress guarantee.
 
-Download all `benchmark-*` artifacts from one run and aggregate them:
+Collect one completed run, including final post-step observer records and
+log-backed results when artifact upload failed, then aggregate it:
 
 ```sh
+python3 .github/scripts/benchmark_collect.py \
+  --run-id RUN_ID --directory PATH_TO_ARTIFACTS
 python3 .github/scripts/benchmark_report.py \
   --directory PATH_TO_ARTIFACTS --profile full \
-  --jobs PATH_TO_JOBS_JSON --output PATH_TO_REPORT
+  --jobs PATH_TO_ARTIFACTS/jobs.json --output PATH_TO_REPORT
 ```
 
-`PATH_TO_JOBS_JSON` is a JSON array from the Actions jobs REST endpoint, including
-steps and their final conclusions; it can be omitted for artifact-only analysis.
+Use a separate directory for each run/attempt. Collection is resumable and skips
+placeholder jobs without logs. The jobs JSON includes steps and their final
+conclusions; it can be omitted for artifact-only analysis.
 The report emits `passed`, `failed`, `unsupported` and `inconclusive`, requires
 matching unprotected controls for denials, rejects incomplete/duplicate cohorts
 and preserves native observations. **Green collection jobs mean the harness
@@ -435,6 +439,108 @@ The official pinned StepSecurity action has no supported input to force the
 Community agent. Record the actual agent build; an Enterprise-selected run
 cannot establish Community behavior. This benchmark does not change the
 organization's App, subscription, Azure infrastructure or `pagopa/dx`.
+
+### Comprehensive results: 9 November 2026
+
+[Full run 42607755421](https://github.com/pagopa-dx/ss-pilot/actions/runs/42607755421)
+executed all **100 case step sequences** at revision
+`8f24597ec8a11c1d74a83839cc9b43759715372a`. All 100 results were collected:
+99 uploaded artifacts and one CargoWall crash result recovered from its job
+log. All 161 legitimate build passes succeeded (91 cold, 70 warm), including
+the ten Vitest tests per pass. The 21 functional jobs produced 294 observations:
+234 passed, 15 failed the intended policy, 9 were unsupported and 36 were
+inconclusive. These totals include baseline and audit: they are **not a security
+score or product ranking**.
+
+The overall GitHub run is **cancelled, not green**. After CargoWall's real
+`SIGKILL`, both allowed and excluded DNS probes failed, artifact upload failed,
+and GitHub still showed the job running after its native posts and `Complete
+job` had finished. Server-side force-cancellation was requested only after all
+100 case step sequences finished. Its successful native post step does not
+establish recovery. The external completion observation is retained separately
+from the application gate and network verdicts.
+
+Each cell below describes all three block repetitions. "Confirmed" requires a
+successful unprotected control and correlated native denial, not just curl
+failure. The allowed HTTPS row instead verifies the positive control.
+
+| Probe | field-cage | CargoWall offline | StepSecurity, selected Enterprise |
+| --- | --- | --- | --- |
+| Allowed HTTPS | Reached | Reached | Reached |
+| Excluded HTTPS, IPv4, redirect, child process, dependency postinstall | Confirmed block | Confirmed block | Confirmed block |
+| Allowed hostname on excluded port 80 | Reached: policy gap | Confirmed block | Failed transport; inconclusive |
+| `www.example.org` when only `example.org` is intended | Reached: policy gap | Reached: policy gap | Confirmed block |
+| Pre-resolved excluded HTTPS and direct-IP HTTP | Confirmed block | Confirmed block | Failed transport; inconclusive |
+| Alternate DNS to `1.1.1.1:53` over UDP | Reply received: coverage gap | Reply received: coverage gap | Confirmed block |
+| Docker bridge and host networking | Confirmed block | Confirmed block | Confirmed block |
+| Excluded HTTPS over IPv6 | Unsupported control | Unsupported control | Unsupported control |
+
+field-cage cannot express the port restriction; CargoWall deliberately matches
+subdomains. The field-cage subdomain request returned HTTP 200 on a shared CDN
+address even though its native log contained denials for that PID/hostname.
+This proves the tested policy intent was not enforced end-to-end, not the
+internal cause or a general vulnerability. A `DENY` log alone is insufficient.
+StepSecurity's failed port/direct-IP transports lack the required correlated
+denial in this collector, so they are not counted as verified blocks.
+
+| Fault | field-cage | CargoWall offline | StepSecurity, selected Enterprise |
+| --- | --- | --- | --- |
+| Invalid startup configuration | Missing release rejected | Missing binary rejected | Invalid policy accepted; actual startup failure not induced |
+| Real agent `SIGKILL` | Harness gate rejected dead agent, but diagnostic excluded request succeeded | Harness gate rejected dead agent; DNS/upload/completion failure, not proven residual enforcement | Signal rejected with `EPERM`; actual agent exit unsupported |
+| Actual GitHub step deadline and child timeout | Passed | Passed | Passed |
+| Dedicated GitHub cancellation | Passed | Passed | Passed |
+
+The application gate is a **benchmark PID-availability check**, not native
+product fail-closed behavior. Diagnostic probes after termination deliberately
+bypass that gate; the application workload does not.
+[Cancellation run 42607580878](https://github.com/pagopa-dx/ss-pilot/actions/runs/42607580878)
+was cancelled while all three protected jobs were waiting. All three final
+observer records, artifacts and native post steps were retained; field-cage's
+explicit stop also succeeded. In the full run, 357 native post steps reported
+success; field-cage stop succeeded in 28 cases and was correctly skipped for
+the missing-release case. These are execution observations, not proof of every
+restored network setting.
+
+All 100 independent observers produced final records with no reported errors
+or truncated destination lists. StepSecurity audit jobs resolved
+`agent.api.stepsecurity.io` and `prod.app-api.stepsecurity.io`; block jobs with
+`disable-telemetry: true` resolved `agent.api.stepsecurity.io`. No
+StepSecurity/CodeCargo DNS names were observed for field-cage or CargoWall.
+This includes guard setup and native cleanup, but not runner boot/action
+downloads before the observer, TLS payloads, all vendor IPs or encrypted DNS.
+It is **not a zero-vendor-egress guarantee**.
+
+Ten performance samples per configuration covered five CPU models. On the
+common AMD EPYC 9V74 stratum, build-time medians in seconds were:
+
+| Configuration | Samples | Cold | Warm-store offline |
+| --- | --- | --- | --- |
+| Baseline | 4 | 5.21 | 4.25 |
+| field-cage audit / block | 3 / 2 | 5.39 / 5.35 | 4.33 / 4.08 |
+| CargoWall audit / block | 3 / 5 | 5.34 / 5.09 | 4.20 / 4.13 |
+| StepSecurity audit / block | 5 / 3 | 5.56 / 5.94 | 4.55 / 4.37 |
+
+These are sums of the six measured build stages, excluding the lifecycle probe
+and guard setup. The within-stratum baseline median is 5.21 seconds cold and
+4.255 seconds warm before rounding. Guard setup medians across the 26
+functional/performance jobs per tool were 4s field-cage, 6s CargoWall and 4s
+StepSecurity. Tiny workloads, 1-5 samples per host stratum, concurrent scheduling
+and image hardware variability prevent a reliable overhead ranking or p95.
+CPU and maximum command RSS remain in the generated report.
+
+StepSecurity again selected **AgentAlpha v1.9.0**, not Community. Community-only
+behavior, forced agent exit, Azure export and Container Apps compatibility remain
+unverified. The corrected
+[smoke run 42607527343](https://github.com/pagopa-dx/ss-pilot/actions/runs/42607527343)
+retained all 23 results and reproduced CargoWall's reporting failure. The first
+smoke run exposed harness PID/preparation bugs and is excluded from the cohort.
+
+For a reporting-stuck run, the collector's `--allow-finished-steps` option
+refuses to proceed while any case is still active/queued. If an external
+supervisor requested force-cancellation, retain its run-specific observation
+with `--supervision PATH_TO_COMPLETION_SUPERVISION_JSON`; never force-close an
+active workload to manufacture a complete cohort. Results recovered only from
+logs explicitly lack the corresponding raw artifact files.
 
 ## Future integration (not part of this pilot)
 

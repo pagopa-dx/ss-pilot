@@ -6,17 +6,41 @@ import unittest
 from unittest.mock import patch
 
 from benchmark_evidence import classify, denied, matches
-from benchmark_collect import marker
+from benchmark_collect import finished_steps, marker
 from benchmark_probes import CASES, curl_probe
 from benchmark_report import aggregate
 from benchmark_runner import plan, resolve_agent_pid
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_collection_rejects_live_cases_even_when_other_cases_are_done(self):
+        done = {"name": "Benchmark cargowall block agent-exit 1", "status": "in_progress", "steps": [{"name": "Complete job", "status": "completed"}]}
+        live = {"name": "Benchmark baseline functional 1", "status": "queued", "steps": []}
+        self.assertTrue(finished_steps([done]))
+        self.assertFalse(finished_steps([done, live]))
+        self.assertFalse(finished_steps([]))
+
     def test_log_evidence_is_explicit_and_malformed_records_are_rejected(self):
         self.assertEqual(marker('timestamp BENCHMARK_CASE_RESULT {"tool":"baseline"}', "BENCHMARK_CASE_RESULT"), [{"tool": "baseline"}])
         with self.assertRaises(ValueError):
             marker("timestamp BENCHMARK_CASE_RESULT {truncated", "BENCHMARK_CASE_RESULT")
+
+    def test_dead_agent_gate_does_not_hide_runner_reporting_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "benchmark-cargowall-block-agent-exit-1-1"
+            artifact.mkdir()
+            (artifact / "result.json").write_text(json.dumps({
+                "tool": "cargowall", "mode": "block", "kind": "agent-exit", "iteration": 1,
+                "completed": True, "fault": {"injected": True, "guard_gate_rejected": True, "probes": []},
+            }))
+            (root / "completion-supervision.json").write_text(json.dumps({"unfinished": [{"id": 123}]}))
+            report = aggregate(root, [{"id": 123, "name": "comprehensive / Benchmark cargowall block agent-exit 1", "status": "completed", "conclusion": "cancelled"}], "full")
+            fault = report["faults"][0]
+            self.assertEqual(fault["status"], "failed")
+            self.assertEqual(fault["application_gate"], "passed")
+            self.assertEqual(fault["residual_network_enforcement"], "inconclusive")
+            self.assertEqual(fault["runner_reporting"], "failed")
 
     def test_field_cage_sudo_wrapper_resolves_to_the_unique_actual_agent(self):
         tree = {
@@ -84,6 +108,13 @@ class BenchmarkTests(unittest.TestCase):
         correct = {**base, "timestamp": "1970-01-01T00:01:40Z"}
         self.assertEqual(matches("cargowall", probe, [wrong, correct]), [correct])
 
+    def test_cargowall_nanoseconds_work_on_python39_without_borrowing_adjacent_probes(self):
+        probe = {"url": "https://example.com/", "pid": 42, "started_at": 100.1, "finished_at": 100.2}
+        base = {"event_type": "dns_blocked", "dst_hostname": "example.com"}
+        adjacent = {**base, "timestamp": "1970-01-01T00:01:40.050000000Z"}
+        own = {**base, "timestamp": "1970-01-01T00:01:40.150123456Z"}
+        self.assertEqual(matches("cargowall", probe, [adjacent, own]), [own])
+
     def test_process_and_port_attribution_cannot_be_substituted(self):
         probe = {"url": "https://example.com/", "pid": 42}
         event = {"domain": "example.com", "port": 443, "tgid": 42}
@@ -121,6 +152,19 @@ class BenchmarkTests(unittest.TestCase):
             self.assertFalse(report["coverage_complete"])
             self.assertEqual(len(report["missing_cases"]), 100)
             self.assertEqual(report["missing_result_artifacts"], ["benchmark-missing"])
+
+    def test_setup_timing_does_not_include_native_cleanup(self):
+        steps = [
+            {"name": name, "started_at": "2026-01-01T00:00:00Z", "completed_at": end}
+            for name, end in (
+                ("Pre Start guard", "2026-01-01T00:00:03Z"),
+                ("Start guard", "2026-01-01T00:00:01Z"),
+                ("Post Start guard", "2026-01-01T00:00:02Z"),
+            )
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            report = aggregate(Path(directory), [{"id": 1, "name": "Benchmark stepsecurity block functional 1", "status": "completed", "steps": steps}], "full")
+            self.assertEqual(report["cleanup"][0]["guard_setup_seconds"], 4)
 
     def test_action_presteps_remain_separated_by_tool(self):
         text = (Path(__file__).parents[1] / "workflows/runtime-benchmark.yml").read_text()

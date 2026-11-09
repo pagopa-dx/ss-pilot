@@ -21,12 +21,13 @@ def matches(tool, probe, events):
             target = event.get("dst_hostname") == domain or (probe.get("ip") and event.get("dst_ip") == probe["ip"])
             timestamp = event.get("timestamp")
             try:
-                at = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() if timestamp else None
+                normalized = re.sub(r"(\.\d{6})\d+(?=Z|[+-]|$)", r"\1", timestamp) if timestamp else None
+                at = datetime.fromisoformat(normalized.replace("Z", "+00:00")).timestamp() if normalized else None
             except ValueError:
                 at = None
             # DNS events have no PID; require their own bounded probe time window.
             identity = event.get("pid") == pid if event.get("pid") else (
-                at is not None and probe.get("started_at", 0) - 0.2 <= at <= probe.get("finished_at", 0) + 0.2
+                at is not None and probe.get("started_at", 0) <= at <= probe.get("finished_at", 0)
             )
             if target and identity and event.get("dst_port", port) == port:
                 result.append(event)
