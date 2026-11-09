@@ -28,7 +28,7 @@ capture.on("exit", (code, signal) => {
 function sockets() {
   if (socketBusy || stopping) return;
   socketBusy = true;
-  execFile("ss", ["-H", "-ntup"], { timeout: 2000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+  execFile("sudo", ["ss", "-H", "-ntup"], { timeout: 2000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
     socketBusy = false;
     if (error) errors.push(`ss: ${error.message}`);
     else fs.appendFileSync(path.join(root, "sockets.jsonl"), JSON.stringify({
@@ -68,8 +68,10 @@ async function stop() {
     errors.push("capture-stop-timeout");
     await new Promise((resolve) => execFile("sudo", ["kill", "-TERM", String(capture.pid)], () => resolve()));
   }
-  packets.end();
-  packetErrors.end();
+  await Promise.all([
+    new Promise((resolve) => packets.end(resolve)),
+    new Promise((resolve) => packetErrors.end(resolve)),
+  ]);
   fs.writeFileSync(path.join(root, "observer-final.json"), JSON.stringify({
     started_at: startedAt, stopped_at: new Date().toISOString(),
     packet_text_bytes: packetBytes, errors,

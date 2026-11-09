@@ -6,8 +6,8 @@ async function main() {
   const pid = Number(process.env.STATE_observer_pid);
   const root = process.env.STATE_observer_root;
   if (!Number.isSafeInteger(pid) || pid <= 1 || !root) throw new Error("Missing observer identity");
-  process.kill(pid, "SIGTERM");
   const file = path.join(root, "observer-final.json");
+  if (!fs.existsSync(file)) process.kill(pid, "SIGTERM");
   for (let i = 0; i < 100 && !fs.existsSync(file); i++) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
