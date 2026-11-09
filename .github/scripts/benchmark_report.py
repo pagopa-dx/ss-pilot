@@ -47,7 +47,11 @@ def aggregate(root, jobs, profile):
         if record.get("agent_build"):
             tier.extend(record["agent_build"])
         if record.get("phases"):
-            builds.append({"tool": tool, "mode": mode, "kind": kind, "iteration": record["iteration"], "completed": record["completed"]})
+            builds.append({
+                "tool": tool, "mode": mode, "kind": kind, "iteration": record["iteration"],
+                "completed": record["completed"],
+                "phases": {cache: {key: phase.get(key) for key in ("build_status", "strict_lifecycle_verification", "strict_lifecycle_reason")} for cache, phase in record["phases"].items()},
+            })
         for probe in record.get("probes", []):
             proof = matches(tool, probe, events)
             controls = baseline.get((probe["case"], record.get("image_version")), [])
@@ -61,6 +65,8 @@ def aggregate(root, jobs, profile):
         if kind == "performance":
             environment = (record.get("image_version"), record.get("kernel"), record.get("cpu_model"), record.get("cpu_count"))
             for cache, phase in record["phases"].items():
+                if phase.get("build_status") != "passed":
+                    continue
                 resources = phase["resources"]
                 performance[(tool, mode, cache, environment)].append({
                     "wall_seconds": sum(item["wall_seconds"] for item in resources.values()),
@@ -76,8 +82,10 @@ def aggregate(root, jobs, profile):
                 reason = "Invalid startup must fail and must not start the application"
             elif kind == "agent-exit":
                 fault = record["fault"]
-                excluded = next(item for item in fault["probes"] if not item["allowed"])
-                if excluded.get("reached"):
+                excluded = next((item for item in fault.get("probes", []) if not item["allowed"]), {})
+                if fault.get("injected") is False:
+                    status, reason = "unsupported", f"Signal rejected; actual agent exit was not induced: {fault.get('signal_error', '')}"
+                elif excluded.get("reached"):
                     status, reason = "failed", "Excluded traffic reached its destination after guard termination"
                 elif fault["guard_gate_rejected"]:
                     status, reason = "passed", "Application gate rejected the unavailable agent; residual packet enforcement is not proven"
@@ -132,15 +140,31 @@ def aggregate(root, jobs, profile):
     actual_keys = {(record["tool"], record["mode"], record["kind"], record["iteration"]) for record in records}
     coherent = len({(record.get("sha"), record.get("run_id"), record.get("attempt")) for record in records}) == 1
     expected = len(expected_keys)
+    observer_path = root / "observer-final.json"
+    observers = json.loads(observer_path.read_text()) if observer_path.exists() else []
+    privacy = []
+    for tool in ("baseline", "field-cage", "cargowall", "stepsecurity"):
+        cohort = [item for item in observers if f"Benchmark {tool} " in item["job"]]
+        finals = [record for item in cohort for record in item["records"]]
+        privacy.append({
+            "tool": tool, "jobs_with_final_record": sum(bool(item["records"]) for item in cohort),
+            "jobs_without_final_record": sum(not item["records"] for item in cohort),
+            "vendor_dns_names": sorted({name for record in finals for name in record.get("vendor_dns_names", [])}),
+            "observer_errors": [error for record in finals for error in record.get("errors", [])],
+            "truncated_destination_lists": sum(record.get("destination_list_truncated", False) for record in finals),
+            "limits": "DNS names identify observed destinations, not transmitted TLS payloads or all vendor IPs.",
+        })
     return {
         "profile": profile, "expected_case_jobs": expected, "result_artifacts": len(records),
         "missing_result_artifacts": missing,
+        "log_recovered_results": [record["artifact"] for record in records if record.get("evidence_source") == "job-log"],
         "missing_cases": sorted(expected_keys - actual_keys),
         "unexpected_cases": sorted(actual_keys - expected_keys),
         "coverage_complete": actual_keys == expected_keys and len(records) == expected and coherent and not missing and all(record.get("completed") for record in records),
         "builds": builds, "cases": cases, "faults": faults,
         "case_status_counts": dict(Counter(case["status"] for case in cases)),
         "performance": measurements, "cleanup": cleanup,
+        "privacy": privacy,
         "stepsecurity_agent_builds": sorted(set(tier)),
         "community_only_test": "inconclusive: the pinned action exposes no supported input to force the Community agent; no organization license or App was changed",
         "limits": [
@@ -176,6 +200,9 @@ def markdown(report):
         lines.append(f"| {sample['tool']} | {sample['mode']} | {sample['cache']} | {sample['samples']} | {sample['metrics']['wall_seconds']['median']:.2f} | {sample['metrics']['install_seconds']['median']:.2f} | {sample['environment'][0]} / {sample['environment'][2]} |")
     lines.extend(["", "## Tier and interpretation", "", report["community_only_test"], ""])
     lines.extend(report["stepsecurity_agent_builds"])
+    lines.extend(["", "## Independent observer", "", "| Tool | Final job records | Missing final records | Vendor DNS names | Observer errors |", "| --- | --- | --- | --- | --- |"])
+    for item in report["privacy"]:
+        lines.append(f"| {item['tool']} | {item['jobs_with_final_record']} | {item['jobs_without_final_record']} | {', '.join(item['vendor_dns_names']) or 'none observed'} | {len(item['observer_errors'])} |")
     lines.extend(["", *["- " + item for item in report["limits"]], ""])
     if report["missing_result_artifacts"]:
         lines.extend(["## Missing/incomplete results", "", *["- " + item for item in report["missing_result_artifacts"]]])

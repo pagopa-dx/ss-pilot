@@ -54,12 +54,20 @@ jobs:
         uses: ./.github/actions/benchmark-finish
         env:
           BENCHMARK_JOB_STATUS: ${{ job.status }}
+      - name: Preserve the pre-post evidence snapshot
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: benchmark-baseline-audit-${{ matrix.kind }}-${{ matrix.iteration }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
 
   field-cage:
     needs: plan
     name: Benchmark field-cage ${{ matrix.mode }} ${{ matrix.kind }} ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.kind == 'agent-exit' && 4 || 15 }}
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -105,18 +113,29 @@ jobs:
         run: python3 .github/scripts/benchmark_runner.py wait
       - if: ${{ steps.guard.outcome == 'success' && matrix.kind != 'startup-failure' }}
         uses: ./.github/actions/benchmark-workload
+      - name: Stop field-cage even after an injected fault
+        if: ${{ always() && env.FC_PID != '' }}
+        uses: takihito/field-cage/stop@b43cc7fd609580579cf9f233dc654fa1119aa220 # v0.1.6
       - if: always()
         uses: ./.github/actions/benchmark-finish
         env:
           BENCHMARK_GUARD_OUTCOME: ${{ steps.guard.outcome }}
           BENCHMARK_JOB_STATUS: ${{ job.status }}
           BENCHMARK_TIMEOUT_OUTCOME: ${{ steps.deadline.outcome }}
+      - name: Preserve the pre-post evidence snapshot
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: benchmark-field-cage-${{ matrix.mode }}-${{ matrix.kind }}-${{ matrix.iteration }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
 
   cargowall:
     needs: plan
     name: Benchmark cargowall ${{ matrix.mode }} ${{ matrix.kind }} ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.kind == 'agent-exit' && 4 || 15 }}
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -170,12 +189,20 @@ jobs:
           BENCHMARK_GUARD_OUTCOME: ${{ steps.guard.outcome }}
           BENCHMARK_JOB_STATUS: ${{ job.status }}
           BENCHMARK_TIMEOUT_OUTCOME: ${{ steps.deadline.outcome }}
+      - name: Preserve the pre-post evidence snapshot
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: benchmark-cargowall-${{ matrix.mode }}-${{ matrix.kind }}-${{ matrix.iteration }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
 
   stepsecurity:
     needs: plan
     name: Benchmark stepsecurity ${{ matrix.mode }} ${{ matrix.kind }} ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: ${{ matrix.kind == 'agent-exit' && 4 || 15 }}
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -228,3 +255,11 @@ jobs:
           BENCHMARK_GUARD_OUTCOME: ${{ steps.guard.outcome }}
           BENCHMARK_JOB_STATUS: ${{ job.status }}
           BENCHMARK_TIMEOUT_OUTCOME: ${{ steps.deadline.outcome }}
+      - name: Preserve the pre-post evidence snapshot
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: benchmark-stepsecurity-${{ matrix.mode }}-${{ matrix.kind }}-${{ matrix.iteration }}-${{ github.run_attempt }}
+          path: ${{ env.PILOT_DIR }}
+          if-no-files-found: error
+          retention-days: 7

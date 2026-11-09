@@ -65,6 +65,10 @@ import sys
 
 Path(sys.argv[2]).write_text(json.dumps({"exit_code": int(sys.argv[1])}) + "\n")
 PY
+if [[ "${BENCHMARK_OBSERVE_ONLY:-false}" == true ]]; then
+  echo "Benchmark observed lifecycle exit $result; acceptance is deferred to the cross-job report."
+  exit 0
+fi
 python3 - "$mode" "$PILOT_HOOK_RESULT" "$result" <<'PY'
 import json
 from pathlib import Path

@@ -6,12 +6,33 @@ import unittest
 from unittest.mock import patch
 
 from benchmark_evidence import classify, denied, matches
+from benchmark_collect import marker
 from benchmark_probes import CASES, curl_probe
 from benchmark_report import aggregate
-from benchmark_runner import plan
+from benchmark_runner import plan, resolve_agent_pid
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_log_evidence_is_explicit_and_malformed_records_are_rejected(self):
+        self.assertEqual(marker('timestamp BENCHMARK_CASE_RESULT {"tool":"baseline"}', "BENCHMARK_CASE_RESULT"), [{"tool": "baseline"}])
+        with self.assertRaises(ValueError):
+            marker("timestamp BENCHMARK_CASE_RESULT {truncated", "BENCHMARK_CASE_RESULT")
+
+    def test_field_cage_sudo_wrapper_resolves_to_the_unique_actual_agent(self):
+        tree = {
+            10: ("/usr/bin/sudo", [11]),
+            11: ("/usr/bin/sudo", [12]),
+            12: ("/tmp/field-cage_linux_amd64", []),
+        }
+        self.assertEqual(resolve_agent_pid("field-cage", 10, tree.__getitem__), 12)
+        self.assertEqual(resolve_agent_pid("field-cage", 12, tree.__getitem__), 12)
+        with self.assertRaises(ValueError):
+            resolve_agent_pid("cargowall", 10, tree.__getitem__)
+        tree[11] = ("/usr/bin/sudo", [12, 13])
+        tree[13] = ("/tmp/field-cage_linux_amd64", [])
+        with self.assertRaises(ValueError):
+            resolve_agent_pid("field-cage", 10, tree.__getitem__)
+
     def test_full_plan_has_exactly_one_hundred_isolated_cases(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"

@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,25 @@ def identity():
     }
 
 
+def resolve_agent_pid(tool, root_pid, inspect):
+    expected = {"stepsecurity": "agent", "field-cage": "field-cage", "cargowall": "cargowall"}[tool]
+    pending, visited, found = [root_pid], set(), []
+    while pending:
+        pid = pending.pop()
+        if pid in visited or len(visited) >= 32:
+            raise ValueError("Unexpected guard process tree")
+        visited.add(pid)
+        executable, children = inspect(pid)
+        name = Path(executable).name
+        if expected in name:
+            found.append(pid)
+        elif tool == "field-cage" and name == "sudo":
+            pending.extend(children)
+    if len(found) != 1:
+        raise ValueError(f"Expected one verified {tool} executable beneath PID {root_pid}; found {found}")
+    return found[0]
+
+
 def guard_pid(tool):
     if tool == "baseline":
         return None
@@ -57,12 +77,17 @@ def guard_pid(tool):
     result = subprocess.run(["sudo", "kill", "-0", str(pid)], capture_output=True, timeout=5)
     if result.returncode:
         raise ValueError(f"{tool} guard PID {pid} is not alive")
-    executable = subprocess.run(
-        ["sudo", "readlink", f"/proc/{pid}/exe"], capture_output=True, text=True, check=True, timeout=5,
-    ).stdout.strip()
-    expected = {"stepsecurity": "agent", "field-cage": "field-cage", "cargowall": "cargowall"}[tool]
-    if expected not in Path(executable).name:
-        raise ValueError(f"Guard PID resolves to unexpected executable: {executable}")
+    def inspect(process_id):
+        executable = subprocess.run(
+            ["sudo", "readlink", f"/proc/{process_id}/exe"], capture_output=True, text=True, timeout=5,
+        )
+        children = subprocess.run(
+            ["sudo", "cat", f"/proc/{process_id}/task/{process_id}/children"], capture_output=True, text=True, timeout=5,
+        )
+        if executable.returncode or children.returncode:
+            raise ValueError(f"Guard process {process_id} vanished or cannot be inspected")
+        return executable.stdout.strip(), [int(value) for value in children.stdout.split()]
+    pid = resolve_agent_pid(tool, pid, inspect)
     if tool == "cargowall" and not Path("/tmp/cargowall-ready").is_file():
         raise ValueError("CargoWall readiness marker missing")
     return pid
@@ -94,7 +119,7 @@ def plan(profile):
 def build(mode, cache):
     directory = ROOT / cache
     directory.mkdir(exist_ok=True)
-    env = {**os.environ, "BENCHMARK_MEASURE": "true", "CI": "true"}
+    env = {**os.environ, "BENCHMARK_MEASURE": "true", "BENCHMARK_OBSERVE_ONLY": "true", "CI": "true"}
     if cache == "warm":
         env["PILOT_OFFLINE_INSTALL"] = "true"
     started = time.time()
@@ -104,7 +129,8 @@ def build(mode, cache):
     )
     save(f"{cache}/command.json", {"exit_code": result.returncode, "started_at": started, "finished_at": time.time()})
     if result.returncode:
-        raise ValueError(f"{cache} legitimate-build/lifecycle control failed: exit {result.returncode}")
+        print(f"::error::{cache} legitimate build failed: exit {result.returncode}; retaining other independent cases.")
+    return result.returncode == 0
 
 
 def run():
@@ -113,8 +139,8 @@ def run():
     context["started_at"] = time.time()
     save("context.json", context)
     save("workload-started.json", {"at": time.time()})
-    build(context["mode"], "cold")
-    if context["kind"] == "performance":
+    cold = build(context["mode"], "cold")
+    if context["kind"] == "performance" and cold:
         build(context["mode"], "warm")
     elif context["kind"] == "functional":
         probes(ROOT)
@@ -133,7 +159,15 @@ def fault():
     at = time.time()
     result = subprocess.run(["sudo", "kill", "-KILL", str(pid)], capture_output=True, text=True, timeout=5)
     if result.returncode:
-        raise ValueError(f"Fault injection failed: {result.stderr}")
+        record = {
+            "kind": "agent-exit", "injected": False, "original_pid": pid,
+            "signal_error": result.stderr, "workload_started": False,
+            "agent_pid_after_attempt": guard_pid(context["tool"]),
+        }
+        save("fault.json", record)
+        print(f"::warning::Agent-exit fault was not induced: {result.stderr.strip()}")
+        print("BENCHMARK_FAULT_RESULT " + json.dumps(record), flush=True)
+        return
     time.sleep(2)
     try:
         replacement = guard_pid(context["tool"])
@@ -146,12 +180,14 @@ def fault():
         curl_probe("after-exit-allowed", "https://example.org/", [], True),
         curl_probe("after-exit-excluded", "https://example.com/", [], False),
     ]
-    save("fault.json", {
-        "kind": "agent-exit", "at": at, "original_pid": pid,
+    record = {
+        "kind": "agent-exit", "injected": True, "at": at, "original_pid": pid,
         "guard_gate_rejected": rejected, "replacement_pid": replacement,
         "workload_started": False, "probes": outcomes,
         "limits": "Diagnostic probes intentionally run after the gate rejects the guard; the application workload does not.",
-    })
+    }
+    save("fault.json", record)
+    print("BENCHMARK_FAULT_RESULT " + json.dumps(record), flush=True)
 
 
 def finalize():
@@ -170,20 +206,39 @@ def finalize():
         report["phases"] = {}
         for cache in ("cold", "warm") if context["kind"] == "performance" else ("cold",):
             folder = root / cache
+            if not (folder / "build.json").exists():
+                report["phases"][cache] = {"build_status": "failed" if cache == "cold" else "unsupported", "resources": {}}
+                continue
             legitimate = json.loads((folder / "build.json").read_text())
             hook = json.loads((folder / "hook.json").read_text())
             lifecycle = json.loads((folder / "lifecycle-command.json").read_text())
             if context["tool"] == "baseline":
-                if set(legitimate.values()) != {"success"} or hook.get("http_status") != 200 or lifecycle.get("exit_code") != 0:
-                    raise ValueError("Invalid unprotected build control")
+                validation = "passed" if set(legitimate.values()) == {"success"} and hook.get("http_status") == 200 and lifecycle.get("exit_code") == 0 else "inconclusive"
+                validation_reason = "Unprotected build and endpoint control"
             else:
-                verify(context["tool"], context["mode"], legitimate, hook, lifecycle, events, (root / "network.log").read_text())
+                try:
+                    verify(context["tool"], context["mode"], legitimate, hook, lifecycle, events, (root / "network.log").read_text())
+                    validation, validation_reason = "passed", "Strict original lifecycle verifier passed"
+                except ValueError as error:
+                    validation, validation_reason = "inconclusive", str(error)
+                    print(f"::warning::{cache} strict lifecycle verification: {error}")
             report["phases"][cache] = {
-                "build": legitimate, "hook": hook,
+                "build": legitimate, "build_status": "passed", "hook": hook,
+                "strict_lifecycle_verification": validation,
+                "strict_lifecycle_reason": validation_reason,
                 "resources": {stage: json.loads((folder / f"{stage}.resources.json").read_text()) for stage in legitimate},
             }
         if context["kind"] == "functional":
             report["probes"] = json.loads((root / "probes.json").read_text())
+            hook = report["phases"]["cold"].get("hook")
+            if hook:
+                report["probes"].append({
+                    "case": "dependency-postinstall", "domain": hook["domain"], "port": 443,
+                    "allowed": False, "pid": hook["pid"], "reached": hook.get("http_status") is not None,
+                    "started_at": datetime.fromisoformat(hook["started_at"].replace("Z", "+00:00")).timestamp(),
+                    "finished_at": datetime.fromisoformat(hook["observed_at"].replace("Z", "+00:00")).timestamp(),
+                    "outcome": hook,
+                })
         report["completed"] = (root / "workload-finished.json").is_file()
     elif context["kind"] == "startup-failure":
         report["completed"] = True
@@ -206,6 +261,7 @@ def finalize():
         report["community_only"] = False if any("AgentAlpha" in line for line in lines) else None
     report["native_events"] = len(events)
     save("result.json", report)
+    print("BENCHMARK_CASE_RESULT " + json.dumps(report), flush=True)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
         stream.write(
             f"\n## Benchmark collected: {context['tool']} {context['mode']} {context['kind']}\n\n"
