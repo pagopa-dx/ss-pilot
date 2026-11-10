@@ -1,0 +1,7 @@
+name: Register Falco lifecycle cleanup
+description: Pilot helper that registers post-job cleanup for the owned Falco container.
+runs:
+  using: node24
+  main: main.cjs
+  post: post.cjs
+  post-if: always()
