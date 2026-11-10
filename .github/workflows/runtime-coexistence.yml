@@ -161,7 +161,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Intentionally skip the combined action
-        if: ${{ false }}
+        if: ${{ inputs.profile == 'never-run-composite' }}
         uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@09d00f8692e196f4c1550070b10bc6b023d182fa
         with:
           egress-policy: block
