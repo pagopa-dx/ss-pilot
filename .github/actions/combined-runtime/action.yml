@@ -1,0 +1,50 @@
+name: Pilot combined firewall and runtime detection
+description: Experimental job-level StepSecurity and Falco combination; not a production action.
+inputs:
+  egress-policy:
+    description: StepSecurity egress policy, audit or block.
+    required: true
+  allowed-endpoints:
+    description: Inline StepSecurity endpoint allowlist.
+    required: false
+    default: ""
+  disable-telemetry:
+    description: StepSecurity event telemetry setting; this does not disable control-plane communication.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Start StepSecurity
+      uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+      with:
+        egress-policy: ${{ inputs.egress-policy }}
+        allowed-endpoints: ${{ inputs.allowed-endpoints }}
+        disable-telemetry: ${{ inputs.disable-telemetry }}
+    - name: Validate pilot settings
+      shell: bash
+      env:
+        PILOT_POLICY: ${{ inputs.egress-policy }}
+        PILOT_TELEMETRY: ${{ inputs.disable-telemetry }}
+      run: |
+        set -euo pipefail
+        [[ "$PILOT_POLICY" == audit || "$PILOT_POLICY" == block ]] || { echo "::error::Unsupported egress policy"; exit 1; }
+        [[ "$PILOT_TELEMETRY" == true || "$PILOT_TELEMETRY" == false ]] || { echo "::error::Invalid telemetry setting"; exit 1; }
+    - name: Register Falco cleanup
+      uses: pagopa-dx/ss-pilot/.github/actions/falco-lifecycle@0549b7bffe2168bb328345a2794e8742b9e60d01
+    - name: Start Falco with the controlled pilot rule
+      uses: falcosecurity/falco-actions/start@558a3ceeee9403e1c875ffbeb704c34c93e24752
+      with:
+        mode: live
+        falco-version: sha256:ba05dfb209cc1c2e912ce116d230b5f59c4542e7286f05b663c499066d5d6a42 # falco-no-driver 0.39.2
+        cicd-rules: "false"
+        custom-rule-file: ${{ github.action_path }}/pilot-rules.yaml
+    - name: Record and verify the owned Falco container
+      shell: bash
+      run: |
+        set -euo pipefail
+        id="$(docker inspect --format '{{.Id}}' falco)"
+        [[ "$id" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::Invalid Falco container identity"; exit 1; }
+        export PILOT_FALCO_ID="$id"
+        python3 -c 'import json, os; from pathlib import Path; Path(os.environ["RUNNER_TEMP"], "ss-pilot-falco-owner.json").write_text(json.dumps({"id": os.environ["PILOT_FALCO_ID"]}))'
+        [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]] || { echo "::error::Falco is not running"; exit 1; }
