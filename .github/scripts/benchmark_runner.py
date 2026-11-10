@@ -107,6 +107,9 @@ def plan(profile):
     guards.extend({"kind": kind, "iteration": 1, "mode": "block"} for kind in ("startup-failure", "agent-exit", "timeout"))
     if profile == "cancellation":
         guards = [{"kind": "cancellation", "iteration": 1, "mode": "block"}]
+    if profile == "udp":
+        baseline = [{"kind": "gap-udp", "iteration": 1, "mode": "audit"}]
+        guards = [{**case, "mode": "block"} for case in baseline]
     specific = {}
     if profile == "gaps":
         baseline = [{"kind": kind, "iteration": i, "mode": "audit"}
@@ -325,7 +328,7 @@ def finalize():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("plan", "run", "fault", "finalize", "gate", "wait"))
-    parser.add_argument("--profile", default="full", choices=("full", "smoke", "cancellation", "gaps"))
+    parser.add_argument("--profile", default="full", choices=("full", "smoke", "cancellation", "gaps", "udp"))
     args = parser.parse_args()
     if args.operation == "plan":
         plan(args.profile)

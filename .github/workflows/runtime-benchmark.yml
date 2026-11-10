@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  BENCHMARK_PROFILE: ${{ inputs.profile }}
+  BENCHMARK_PROFILE: ${{ inputs.profile == 'udp' && 'gaps' || inputs.profile }}
 
 jobs:
   plan:

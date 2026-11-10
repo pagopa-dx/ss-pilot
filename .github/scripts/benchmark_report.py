@@ -156,7 +156,10 @@ def aggregate(root, jobs, profile):
         })
     sizes = (1, 1) if profile == "smoke" else (3, 10)
     expected_keys = set()
-    if profile == "gaps":
+    if profile == "udp":
+        expected_keys = {("baseline", "audit", "gap-udp", 1)}
+        expected_keys.update((tool, "block", "gap-udp", 1) for tool in ("field-cage", "cargowall", "stepsecurity"))
+    elif profile == "gaps":
         for kind in ("gap-excluded-first", "gap-allowed-first", "gap-pinned"):
             for i in range(1, 4):
                 expected_keys.add(("baseline", "audit", kind, i))
@@ -236,7 +239,7 @@ def aggregate(root, jobs, profile):
         "telemetry_comparison": telemetry,
         "privacy": privacy,
         "stepsecurity_agent_builds": sorted(set(tier)),
-        "community_only_test": "Enterprise is the accepted test target for this follow-up; Community differences are documentary, not an equivalence claim." if profile == "gaps" else "inconclusive: the pinned action exposes no supported input to force the Community agent; no organization license or App was changed",
+        "community_only_test": "Enterprise is the accepted test target for this follow-up; Community differences are documentary, not an equivalence claim." if profile in ("gaps", "udp") else "inconclusive: the pinned action exposes no supported input to force the Community agent; no organization license or App was changed",
         "limits": [
             "HTTP 403 is transport reachability, not a firewall denial.",
             "Each performance job has a fresh runner; cold install precedes a warm-store offline reinstall.",
@@ -304,7 +307,7 @@ def markdown(report):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
-    parser.add_argument("--profile", choices=("full", "smoke", "cancellation", "gaps"), required=True)
+    parser.add_argument("--profile", choices=("full", "smoke", "cancellation", "gaps", "udp"), required=True)
     parser.add_argument("--jobs", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

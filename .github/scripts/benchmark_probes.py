@@ -124,18 +124,22 @@ def curl_probe(name, url, flags, allowed, *, launch="host", container_image=None
             command(["docker", "rm", "-f", container_id])
 
 
-def udp_probe():
+def udp_probe(connected=False):
     identifier = os.urandom(2)
     question = b"".join(bytes([len(label)]) + label.encode("ascii") for label in "example.com".split(".")) + b"\0"
     packet = identifier + struct.pack("!5H", 0x0100, 1, 0, 0, 0) + question + struct.pack("!2H", 1, 1)
     result = {
-        "case": "alternate-dns-udp", "domain": "example.com", "ip": "1.1.1.1", "port": 53,
+        "case": "alternate-dns-udp-connected" if connected else "alternate-dns-udp", "domain": "example.com", "ip": "1.1.1.1", "port": 53,
         "allowed": False, "started_at": time.time(), "pid": os.getpid(), "reached": False,
     }
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(3)
         try:
-            sock.sendto(packet, ("1.1.1.1", 53))
+            if connected:
+                sock.connect(("1.1.1.1", 53))
+                sock.send(packet)
+            else:
+                sock.sendto(packet, ("1.1.1.1", 53))
             response, peer = sock.recvfrom(1024)
             result["reached"] = peer == ("1.1.1.1", 53) and response[:2] == identifier and len(response) >= 12
             result["response_bytes"] = len(response)

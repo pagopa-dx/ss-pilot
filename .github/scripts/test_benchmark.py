@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from benchmark_evidence import classify, denied, matches
 from benchmark_collect import finished_steps, marker
-from benchmark_probes import CASES, curl_probe
+from benchmark_probes import CASES, curl_probe, udp_probe
 from benchmark_report import aggregate
 from benchmark_runner import fault, plan, resolve_agent_pid
 
@@ -86,7 +86,7 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(len({(case["kind"], case["iteration"], case["mode"]) for case in guards}), len(guards))
 
     def test_smoke_and_cancellation_plan_sizes(self):
-        for profile, expected in (("smoke", 23), ("cancellation", 3)):
+        for profile, expected in (("smoke", 23), ("cancellation", 3), ("udp", 4)):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
                 with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
@@ -109,6 +109,16 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual({(case["mode"], case["telemetry"]) for case in privacy},
                              {("audit", "on"), ("audit", "off"), ("block", "on"), ("block", "off")})
             self.assertFalse(any(case["kind"].startswith("agent-exit") for case in values["stepsecurity"]))
+
+    def test_udp_variants_use_distinct_socket_paths(self):
+        for connected in (False, True):
+            with patch("benchmark_probes.socket.socket") as socket:
+                sock = socket.return_value.__enter__.return_value
+                sock.recvfrom.side_effect = OSError("bounded test denial")
+                result = udp_probe(connected=connected)
+                self.assertFalse(result["reached"])
+                self.assertEqual(sock.connect.call_count, int(connected))
+                self.assertEqual(sock.sendto.call_count, int(not connected))
 
     def test_step_packet_denial_requires_exact_process_address_and_port(self):
         probe = {"url": "http://example.org/", "pid": 42, "target_ips": ["172.66.157.237"]}
