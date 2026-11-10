@@ -1,0 +1,181 @@
+name: Combined firewall and runtime detection pilot
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  PILOT_DIR: /tmp/coexistence-pilot
+
+jobs:
+  baseline:
+    if: ${{ inputs.profile == 'coexistence' }}
+    name: No firewall or detector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PILOT_CASE: baseline
+      PILOT_MODE: audit
+      PILOT_FIREWALL: disabled
+      PILOT_DETECTOR: disabled
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/coexistence-workload
+
+  firewall:
+    if: ${{ inputs.profile == 'coexistence' }}
+    name: StepSecurity firewall only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PILOT_CASE: firewall
+      PILOT_MODE: block
+      PILOT_FIREWALL: enabled
+      PILOT_DETECTOR: disabled
+    steps:
+      - name: Start StepSecurity
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >-
+            nodejs.org:443 registry.npmjs.org:443 api.github.com:443 github.com:443
+            *.githubusercontent.com:443 *.githubapp.com:443 *.blob.core.windows.net:443
+            *.trafficmanager.net:443 auth.docker.io:443 registry-1.docker.io:443
+            *.docker.io:443 *.docker.com:443
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/coexistence-workload
+
+  detector:
+    if: ${{ inputs.profile == 'coexistence' }}
+    name: Falco detector only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PILOT_CASE: detector
+      PILOT_MODE: audit
+      PILOT_FIREWALL: disabled
+      PILOT_DETECTOR: enabled
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/falco-pilot-start
+      - uses: ./.github/actions/coexistence-workload
+
+  combined:
+    if: ${{ inputs.profile == 'coexistence' }}
+    name: Combined firewall and detector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PILOT_CASE: combined
+      PILOT_MODE: block
+      PILOT_FIREWALL: enabled
+      PILOT_DETECTOR: enabled
+    steps:
+      - name: Start the combined prototype
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@3f3f63e48619aa19402131ae891900d2aa7266ec
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: >-
+            nodejs.org:443 registry.npmjs.org:443 api.github.com:443 github.com:443
+            *.githubusercontent.com:443 *.githubapp.com:443 *.blob.core.windows.net:443
+            *.trafficmanager.net:443 auth.docker.io:443 registry-1.docker.io:443
+            *.docker.io:443 *.docker.com:443
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/coexistence-workload
+
+  failed-workload:
+    if: ${{ inputs.profile == 'coexistence-failure' }}
+    name: Combined action after workload failure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start the combined prototype
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@3f3f63e48619aa19402131ae891900d2aa7266ec
+        with:
+          egress-policy: audit
+          disable-telemetry: false
+      - name: Deliberately fail after startup
+        run: |
+          echo "PILOT_EXPECTED_WORKLOAD_FAILURE"
+          exit 1
+
+  dead-detector:
+    if: ${{ inputs.profile == 'coexistence-failure' }}
+    name: Detector loss is surfaced
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start the combined prototype
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@3f3f63e48619aa19402131ae891900d2aa7266ec
+        with:
+          egress-policy: audit
+          disable-telemetry: false
+      - name: Kill only the pilot-owned detector and require a live container
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="$(python3 -c 'import json, os; from pathlib import Path; print(json.loads(Path(os.environ["RUNNER_TEMP"], "ss-pilot-falco-owner.json").read_text())["id"])')"
+          docker kill "$id"
+          echo "PILOT_EXPECTED_DETECTOR_LOSS"
+          if ! docker inspect --format '{{.State.Running}}' "$id" 2>/dev/null | grep -qx true; then
+            echo "::error::Falco was lost; refusing to run the workload."
+            exit 1
+          fi
+
+  cancelled:
+    if: ${{ inputs.profile == 'coexistence-cancel' }}
+    name: Combined action after cancellation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start the combined prototype
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@3f3f63e48619aa19402131ae891900d2aa7266ec
+        with:
+          egress-policy: audit
+          disable-telemetry: false
+      - name: Wait for explicit external cancellation
+        run: |
+          echo "PILOT_CANCEL_READY"
+          sleep 480
+
+  skipped-composite:
+    if: ${{ inputs.profile == 'coexistence-conditional' }}
+    name: Skipped combined action pre-step observation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Intentionally skip the combined action
+        if: ${{ false }}
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@3f3f63e48619aa19402131ae891900d2aa7266ec
+        with:
+          egress-policy: block
+          disable-telemetry: true
+          allowed-endpoints: api.github.com:443
+      - name: Observe rather than assume what ran
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo test -f /home/agent/agent.log; then
+            echo "PILOT_SKIPPED_COMPOSITE_AGENT_LOG=true"
+            sudo grep -E '\[buildInfo\]|egress-policy|egress_policy' /home/agent/agent.log | head -10 || true
+          else
+            echo "PILOT_SKIPPED_COMPOSITE_AGENT_LOG=false"
+          fi
+          curl --silent --show-error --noproxy '*' --connect-timeout 4 --max-time 8 \
+            --output /dev/null --write-out 'PILOT_SKIPPED_COMPOSITE_CURL=%{http_code}\n' https://example.com/
