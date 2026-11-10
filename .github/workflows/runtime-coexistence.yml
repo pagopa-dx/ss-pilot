@@ -85,7 +85,7 @@ jobs:
       PILOT_DETECTOR: enabled
     steps:
       - name: Start the combined prototype
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@d9506aea58feb22173470511f2665abeca388566
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@09d00f8692e196f4c1550070b10bc6b023d182fa
         with:
           egress-policy: block
           disable-telemetry: true
@@ -106,7 +106,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Start the combined prototype
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@d9506aea58feb22173470511f2665abeca388566
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@09d00f8692e196f4c1550070b10bc6b023d182fa
         with:
           egress-policy: audit
           disable-telemetry: false
@@ -122,7 +122,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Start the combined prototype
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@d9506aea58feb22173470511f2665abeca388566
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@09d00f8692e196f4c1550070b10bc6b023d182fa
         with:
           egress-policy: audit
           disable-telemetry: false
@@ -145,7 +145,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Start the combined prototype
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@d9506aea58feb22173470511f2665abeca388566
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@09d00f8692e196f4c1550070b10bc6b023d182fa
         with:
           egress-policy: audit
           disable-telemetry: false
@@ -162,7 +162,7 @@ jobs:
     steps:
       - name: Intentionally skip the combined action
         if: ${{ false }}
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@d9506aea58feb22173470511f2665abeca388566
+        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@09d00f8692e196f4c1550070b10bc6b023d182fa
         with:
           egress-policy: block
           disable-telemetry: true
