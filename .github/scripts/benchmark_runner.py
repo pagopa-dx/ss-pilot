@@ -183,6 +183,15 @@ def fault():
             stdout=subprocess.PIPE, text=True, start_new_session=True)
         if child.stdout.readline().strip() != "SYNTHETIC_WORKLOAD_READY":
             raise ValueError("Synthetic supervised workload did not start")
+    try:
+        inject_fault(context, pid, child)
+    finally:
+        if child and child.poll() is None:
+            os.killpg(child.pid, signal.SIGTERM)
+            child.wait(timeout=5)
+
+
+def inject_fault(context, pid, child):
     at = time.time()
     result = subprocess.run(["sudo", "kill", "-KILL", str(pid)], capture_output=True, text=True, timeout=5)
     if result.returncode:

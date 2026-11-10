@@ -1,18 +1,33 @@
 import json
 import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from benchmark_evidence import classify, denied, matches
 from benchmark_collect import finished_steps, marker
 from benchmark_probes import CASES, curl_probe
 from benchmark_report import aggregate
-from benchmark_runner import plan, resolve_agent_pid
+from benchmark_runner import fault, plan, resolve_agent_pid
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_supervised_workload_is_reaped_on_fault_injection_error(self):
+        child = Mock(pid=999)
+        child.stdout.readline.return_value = "SYNTHETIC_WORKLOAD_READY\n"
+        child.poll.return_value = None
+        with patch("benchmark_runner.identity", return_value={"tool": "field-cage", "kind": "agent-exit-during"}), \
+                patch("benchmark_runner.guard_pid", return_value=123), patch("benchmark_runner.save"), \
+                patch("benchmark_runner.subprocess.Popen", return_value=child), \
+                patch("benchmark_runner.subprocess.run", side_effect=subprocess.TimeoutExpired("kill", 5)), \
+                patch("benchmark_runner.os.killpg") as terminate:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                fault()
+            terminate.assert_called_once()
+            child.wait.assert_called_once_with(timeout=5)
+
     def test_collection_rejects_live_cases_even_when_other_cases_are_done(self):
         done = {"name": "Benchmark cargowall block agent-exit 1", "status": "in_progress", "steps": [{"name": "Complete job", "status": "completed"}]}
         live = {"name": "Benchmark baseline functional 1", "status": "queued", "steps": []}

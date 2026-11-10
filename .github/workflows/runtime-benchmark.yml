@@ -50,7 +50,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@33ddbffba9ab6bd32a194cc52bd62b4740cfd247
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -87,7 +87,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@33ddbffba9ab6bd32a194cc52bd62b4740cfd247
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -155,7 +155,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@33ddbffba9ab6bd32a194cc52bd62b4740cfd247
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -223,7 +223,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@33ddbffba9ab6bd32a194cc52bd62b4740cfd247
       - name: Start StepSecurity or inject an invalid policy
         id: guard
         continue-on-error: ${{ matrix.kind == 'startup-failure' }}
