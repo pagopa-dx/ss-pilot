@@ -695,81 +695,11 @@ remain outside the demonstrated coverage.
 
 ## Experimental combined firewall and detector
 
-The pilot also contains a **prototype**, not a production-ready action:
-`.github/actions/combined-runtime`. It starts the pinned Harden-Runner action
-and an owned Falco container as one composite step. Falco is a detector, not
-the firewall: the two components do different jobs. Both technologies are
-absent from the DX Technology Radar and were explicitly approved for this
-experiment only.
-
-The original [Falco Actions](https://github.com/falcosecurity/falco-actions)
-start adapter, pinned at `558a3ceeee9403e1c875ffbeb704c34c93e24752`, uses
-`falcosecurity/falco-no-driver` 0.39.2 and briefly reported the container
-running, but the container then exited. A separate diagnostic without `--rm`
-showed `Initialization issues during scap_init` when opening the modern eBPF
-source, even without StepSecurity. The underlying kernel/library cause was not
-established. Its CI rules were not tested: this version of the image is older
-than the engine version requested by the upstream rules.
-
-The working **local pilot adapter is not Falco Actions**: it runs official
-`falcosecurity/falco` 0.45.2 at digest
-`sha256:1562a643953f938e02f47319b5214d93a235f11f646d60e9b8a516fd5a64698e`,
-with modern eBPF and a single harmless custom process-marker rule. It requires a
-privileged Docker container with host `/proc`, `/etc`, `tracefs` and the Docker
-socket; it is not a least-privilege or self-hosted deployment design. Falco
-and Falco Actions are open source; this live pilot uses no vendor portal or
-paid API, but downloads the image and GitHub actions over the network. Falco's
-default rules also run; only the matching controlled marker is retained in the
-pilot artifact, while runtime events can contain sensitive data. Use no secrets
-or sensitive workloads without a separate privacy and retention review.
-
-The [four-control run](https://github.com/pagopa-dx/ss-pilot/actions/runs/42835664227)
-completed all six DX-aligned build phases in four separate jobs: baseline,
-firewall only, detector only, and both together. The harmless dependency hook
-reached `example.com` in the two unprotected controls and was blocked in the
-two firewall jobs, with matching native StepSecurity DNS-denial evidence.
-Both Falco jobs produced a native event for the **exact PID** of the controlled
-marker. This demonstrates that one composite step can start these components
-together for this workload; it does not establish full detection coverage,
-continuous fail-closed supervision, general performance, or production readiness.
-
-The adapter records the container ID before starting it, requires a matching
-Falco event at startup, and uses a JavaScript post step to stop and remove only
-its recorded container. It checks detector liveness before bootstrap, before
-the workload, and afterwards; these discrete checks **cannot prevent a
-detector dying during a running build**. A partial failure between Docker
-creating the container and persisting its ID can leave an unowned container;
-cleanup refuses to stop unidentified containers. Hard runner termination can
-also prevent post steps from running.
-
-In the [failure run](https://github.com/pagopa-dx/ss-pilot/actions/runs/42835671797)
-a deliberate workload failure still ran the owned-container post; killing the
-detector before the workload failed the job and removed the stopped container
-while reporting the loss. In the [cancellation run](https://github.com/pagopa-dx/ss-pilot/actions/runs/42835678203)
-the job was cancelled only after its waiting step started, and its post stopped
-the owned container. These runs intentionally end failed/cancelled, not green.
-
-**Critical composition limitation:** in the
-[conditional experiment](https://github.com/pagopa-dx/ss-pilot/actions/runs/42833990022)
-the combined step had `if: false`, but Harden-Runner's nested `pre` still ran
-in block mode and denied `example.com`. Do not conditionally include this
-composite expecting to suppress the firewall; use separate jobs or a different
-design. No rollout to DX should occur until that behavior, lifecycle
-supervision, rule selection, access privileges, external traffic, support,
-and the previously documented shared-IP hostname gap have been addressed.
-
-To reproduce the four controls on a test branch, dispatch the entry point
-already on the default branch:
-
-```sh
-gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot \
-  --ref YOUR_TEST_BRANCH -f benchmark=coexistence
-```
-
-The other opt-in profiles are `coexistence-failure`, `coexistence-cancel`,
-`coexistence-conditional`, and `coexistence-diagnostic`; some intentionally
-fail or require explicit cancellation. They are isolated on fresh GitHub-hosted
-Ubuntu jobs and must not be used to inject faults into a shared machine.
+The reusable-action prototype is being reviewed separately in
+[PR #4](https://github.com/pagopa-dx/ss-pilot/pull/4). Historical evidence for
+the four-control comparison remains in
+[run 42835664227](https://github.com/pagopa-dx/ss-pilot/actions/runs/42835664227);
+the prototype is experimental and is not approved for rollout.
 
 ## Future integration (not part of this pilot)
 

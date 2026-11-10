@@ -14,11 +14,6 @@ on:
           - cancellation
           - gaps
           - udp
-          - coexistence
-          - coexistence-failure
-          - coexistence-cancel
-          - coexistence-conditional
-          - coexistence-diagnostic
   pull_request:
     branches:
       - main
@@ -28,14 +23,8 @@ permissions:
 
 jobs:
   comprehensive:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark != 'none' && !startsWith(inputs.benchmark, 'coexistence') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark != 'none' }}
     uses: ./.github/workflows/runtime-benchmark.yml
-    with:
-      profile: ${{ inputs.benchmark }}
-
-  coexistence:
-    if: ${{ github.event_name == 'workflow_dispatch' && startsWith(inputs.benchmark, 'coexistence') }}
-    uses: ./.github/workflows/runtime-coexistence.yml
     with:
       profile: ${{ inputs.benchmark }}
 

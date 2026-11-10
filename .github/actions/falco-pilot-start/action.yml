@@ -1,9 +1,0 @@
-name: Start isolated Falco detection control
-description: Pilot control matching the detector portion of the combined action.
-runs:
-  using: composite
-  steps:
-    - name: Start the pilot Falco engine and register cleanup
-      uses: pagopa-dx/ss-pilot/.github/actions/falco-lifecycle@c670e24c54a5440ff48a295ec542be92439992ef
-      with:
-        rule-file: ${{ github.workspace }}/.github/actions/combined-runtime/pilot-rules.yaml

@@ -1,8 +1,0 @@
-- rule: SS Pilot Controlled Process Marker
-  desc: Detect a harmless process marker used only to validate this pilot.
-  condition: >
-    evt.type = execve and evt.dir = < and proc.name = python3
-    and proc.cmdline contains ss-pilot-controlled-marker
-  output: "SS pilot controlled marker (pid=%proc.pid)"
-  priority: NOTICE
-  tags: [ss_pilot]
