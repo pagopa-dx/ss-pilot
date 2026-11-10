@@ -107,8 +107,10 @@ deliberately fails two jobs; inspect their post steps rather than interpreting
 the red run as a regression. The cancellation profile waits for an explicit
 external cancellation after `PILOT_CANCEL_READY`; cancellation or hard runner
 termination can prevent cleanup. The conditional profile observes the known
-nested pre-step behavior. The diagnostic profile includes the upstream older
-image, which previously failed, so it may intentionally produce a failed job.
+nested pre-step behavior and records whether the test request was reachable;
+its success only means the observation completed. The diagnostic profile
+includes the upstream older image, which previously failed, so it may
+intentionally produce a failed job.
 
 The harness pins both remote actions to commits in this PR's history, while its
 local helpers come from the checked-out branch. Update those pins alongside

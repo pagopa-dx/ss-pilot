@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 
@@ -44,6 +45,26 @@ class BuildEvidenceTests(unittest.TestCase):
             (root / "build.json").write_text(json.dumps(build))
             with self.assertRaisesRegex(ValueError, "lint"):
                 verify_build(root, "block")
+
+
+class HarnessPinTests(unittest.TestCase):
+    def test_harness_uses_the_same_immutable_action_snapshots(self):
+        root = Path(__file__).resolve().parents[2]
+        pattern = r"pagopa-dx/ss-pilot/\.github/actions/{}@([0-9a-f]{{40}})"
+
+        def pins(path, action):
+            return re.findall(pattern.format(action), (root / path).read_text())
+
+        smoke = pins(".github/workflows/combined-runtime-pilot.yml", "combined-runtime")
+        harness = pins(".github/workflows/runtime-coexistence.yml", "combined-runtime")
+        self.assertEqual(len(smoke), 1)
+        self.assertTrue(harness)
+        self.assertEqual(set(harness), set(smoke))
+
+        composite = pins(".github/actions/combined-runtime/action.yml", "falco-lifecycle")
+        control = pins(".github/actions/falco-pilot-start/action.yml", "falco-lifecycle")
+        self.assertEqual(len(composite), 1)
+        self.assertEqual(control, composite)
 
 
 if __name__ == "__main__":

@@ -4,9 +4,14 @@ on:
   pull_request:
     paths:
       - .github/actions/combined-runtime/**
+      - .github/actions/coexistence-workload/**
       - .github/actions/falco-lifecycle/**
+      - .github/actions/falco-pilot-start/**
+      - .github/scripts/coexistence_verify.py
+      - .github/scripts/test_coexistence.py
       - .github/scripts/test_falco_lifecycle.cjs
       - .github/workflows/combined-runtime-pilot.yml
+      - .github/workflows/runtime-coexistence.yml
   workflow_dispatch:
 
 permissions:

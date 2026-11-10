@@ -177,8 +177,17 @@ jobs:
           else
             echo "PILOT_SKIPPED_COMPOSITE_AGENT_LOG=false"
           fi
-          curl --silent --show-error --noproxy '*' --connect-timeout 4 --max-time 8 \
-            --output /dev/null --write-out 'PILOT_SKIPPED_COMPOSITE_CURL=%{http_code}\n' https://example.com/
+          if curl --silent --show-error --noproxy '*' --connect-timeout 4 --max-time 8 \
+            --output /dev/null --write-out 'PILOT_SKIPPED_COMPOSITE_CURL=%{http_code}\n' https://example.com/; then
+            echo "PILOT_SKIPPED_COMPOSITE_CURL_EXIT=0"
+          else
+            status=$?
+            echo "PILOT_SKIPPED_COMPOSITE_CURL_EXIT=$status"
+            case "$status" in
+              6|7|28) ;;
+              *) echo "::error::Unexpected curl error: $status"; exit 1 ;;
+            esac
+          fi
 
   diagnose-falco:
     if: ${{ inputs.profile == 'coexistence-diagnostic' }}
