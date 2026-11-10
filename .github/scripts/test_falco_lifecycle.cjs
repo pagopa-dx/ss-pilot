@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { cleanup } = require("../actions/falco-lifecycle/lifecycle.cjs");
+const { cleanup, findMarker } = require("../actions/falco-lifecycle/lifecycle.cjs");
 
 test("stops exactly the recorded running container", () => {
   const id = "a".repeat(64);
@@ -19,11 +19,22 @@ test("stops exactly the recorded running container", () => {
     assert.deepEqual(calls, [
       ["inspect", "--format", "{{.State.Running}}", id],
       ["stop", "--time", "10", id],
+      ["rm", id],
     ]);
   } finally {
     fs.unlinkSync(file);
     fs.rmdirSync(path.dirname(file));
   }
+});
+
+test("startup marker requires the same rule and process and rejects malformed events", () => {
+  const events = [
+    { rule: "other", output_fields: { "proc.pid": 101 } },
+    { rule: "SS Pilot Controlled Process Marker", output_fields: { "proc.pid": 102 } },
+  ].map(JSON.stringify).join("\n");
+  assert.equal(findMarker(events, 101), undefined);
+  assert.equal(findMarker(events, 102).rule, "SS Pilot Controlled Process Marker");
+  assert.throws(() => findMarker("not-json", 101), SyntaxError);
 });
 
 test("refuses an unowned or invalid container and surfaces dead-agent errors", () => {
