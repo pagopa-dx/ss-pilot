@@ -50,16 +50,15 @@ async function start(recordPath, ruleFile, run = docker) {
     if (run(["inspect", "--format", "{{.State.Running}}", id]) !== "true") {
       throw new Error(`Falco container exited during startup: ${run(["logs", id])}`);
     }
+    const pid = execFileSync("python3", ["-c", "import os; print(os.getpid())", "ss-pilot-controlled-marker"], {
+      encoding: "utf8", timeout: 10000,
+    }).trim();
+    attemptedPids.push(pid);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     if (fs.existsSync("/tmp/falco_events.json")) {
-      const pid = execFileSync("python3", ["-c", "import os; print(os.getpid())", "ss-pilot-controlled-marker"], {
-        encoding: "utf8", timeout: 10000,
-      }).trim();
-      attemptedPids.push(pid);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
       const events = execFileSync("sudo", ["cat", "/tmp/falco_events.json"], { encoding: "utf8", timeout: 10000 });
-      if (findMarker(events, pid)) return { id, marker_pid: pid };
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const markerPid = attemptedPids.find((attemptedPid) => findMarker(events, attemptedPid));
+      if (markerPid) return { id, marker_pid: markerPid };
     }
     if (fs.existsSync("/tmp/falco_events.json")) {
       const events = execFileSync("sudo", ["cat", "/tmp/falco_events.json"], { encoding: "utf8", timeout: 10000 });
