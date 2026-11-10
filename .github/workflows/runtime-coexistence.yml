@@ -188,7 +188,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [action-image, current-engine]
+        version: [action-image, current-engine, current-engine-tracefs]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -204,10 +204,15 @@ jobs:
           else
             image="falcosecurity/falco@sha256:1562a643953f938e02f47319b5214d93a235f11f646d60e9b8a516fd5a64698e"
           fi
+          extra_mount=()
+          if [[ "$PILOT_FALCO_VERSION" == current-engine-tracefs ]]; then
+            extra_mount=(-v /sys/kernel/tracing:/sys/kernel/tracing:ro)
+          fi
           id="$(docker run -d --name ss-pilot-falco-diagnostic --privileged \
             -v /tmp:/tmp -v /var/run/docker.sock:/host/var/run/docker.sock \
             -v /proc:/host/proc:ro -v /etc:/host/etc:ro \
             -v "$GITHUB_WORKSPACE/.github/actions/combined-runtime/pilot-rules.yaml:/etc/falco/rules.d/custom_rules.yaml:ro" \
+            "${extra_mount[@]}" \
             "$image" \
             falco -o "json_output=true" -o "file_output.enabled=true" -o "file_output.keep_alive=false" \
             -o "file_output.filename=/tmp/falco_events.json" -o "engine.kind=modern_ebpf")"
@@ -216,3 +221,14 @@ jobs:
           docker logs "$id"
           docker inspect --format 'PILOT_FALCO_DIAGNOSTIC running={{.State.Running}} exit={{.State.ExitCode}} error={{.State.Error}}' "$id"
           [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]]
+          marker_pid="$(python3 -c 'import os,sys; print(os.getpid())' ss-pilot-controlled-marker)"
+          export PILOT_MARKER_PID="$marker_pid" PYTHONPATH=".github/scripts"
+          for attempt in {1..15}; do
+            if sudo cat /tmp/falco_events.json 2>/dev/null | python3 -c \
+              'import os,sys; from coexistence_verify import marker_event; e=marker_event(sys.stdin.read(),os.environ["PILOT_MARKER_PID"]); print("PILOT_FALCO_DIAGNOSTIC_EVENT=" + str(e) if e else "PILOT_FALCO_DIAGNOSTIC_EVENT=missing"); sys.exit(0 if e else 1)'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::No matching native Falco event for marker PID $marker_pid"
+          exit 1
