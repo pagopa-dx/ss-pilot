@@ -1,0 +1,11 @@
+name: Start and clean up the pilot Falco engine
+description: Pilot adapter for a pinned official Falco image, with owned post-job cleanup.
+inputs:
+  rule-file:
+    description: Absolute path to the controlled pilot rule.
+    required: true
+runs:
+  using: node24
+  main: main.cjs
+  post: post.cjs
+  post-if: always()
