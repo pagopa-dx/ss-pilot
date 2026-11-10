@@ -10,9 +10,12 @@ let packetBytes = 0;
 const errors = [];
 const packets = fs.createWriteStream(path.join(root, "network.log"), { mode: 0o600 });
 const packetErrors = fs.createWriteStream(path.join(root, "capture.stderr"), { mode: 0o600 });
+const captureFilter = process.env.BENCHMARK_PROFILE === "gaps"
+  ? "udp or (ip and tcp and (tcp[tcpflags] & 0x07 != 0)) or (ip6 and tcp)"
+  : "tcp or udp";
 const capture = spawn("sudo", [
   "tcpdump", "--immediate-mode", "-i", "any", "-nn", "-tt", "-l", "-s", "256",
-  "tcp or udp",
+  captureFilter,
 ], { stdio: ["ignore", "pipe", "pipe"] });
 capture.stdout.on("data", (chunk) => {
   packetBytes += chunk.length;
@@ -75,6 +78,7 @@ async function stop() {
   fs.writeFileSync(path.join(root, "observer-final.json"), JSON.stringify({
     started_at: startedAt, stopped_at: new Date().toISOString(),
     packet_text_bytes: packetBytes, errors,
+    capture_filter: captureFilter,
     limits: "Starts before guard setup, not before runner boot or action download. " +
       "Socket process attribution is sampled; no TLS decryption or zero-egress guarantee.",
   }, null, 2));
