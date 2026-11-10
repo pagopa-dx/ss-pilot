@@ -179,3 +179,29 @@ jobs:
           fi
           curl --silent --show-error --noproxy '*' --connect-timeout 4 --max-time 8 \
             --output /dev/null --write-out 'PILOT_SKIPPED_COMPOSITE_CURL=%{http_code}\n' https://example.com/
+
+  diagnose-falco:
+    if: ${{ inputs.profile == 'coexistence-diagnostic' }}
+    name: Diagnose Falco startup independently
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Preserve the exact container logs and exit state
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="$(docker run -d --name ss-pilot-falco-diagnostic --privileged \
+            -v /tmp:/tmp -v /var/run/docker.sock:/host/var/run/docker.sock \
+            -v /proc:/host/proc:ro -v /etc:/host/etc:ro \
+            -v "$GITHUB_WORKSPACE/.github/actions/combined-runtime/pilot-rules.yaml:/etc/falco/rules.d/custom_rules.yaml:ro" \
+            falcosecurity/falco-no-driver@sha256:ba05dfb209cc1c2e912ce116d230b5f59c4542e7286f05b663c499066d5d6a42 \
+            falco -o "json_output=true" -o "file_output.enabled=true" -o "file_output.keep_alive=false" \
+            -o "file_output.filename=/tmp/falco_events.json" -o "engine.kind=modern_ebpf")"
+          trap 'docker rm -f "$id" >/dev/null' EXIT
+          sleep 15
+          docker logs "$id"
+          docker inspect --format 'PILOT_FALCO_DIAGNOSTIC running={{.State.Running}} exit={{.State.ExitCode}} error={{.State.Error}}' "$id"
+          [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]]

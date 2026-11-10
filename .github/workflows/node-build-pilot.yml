@@ -18,6 +18,7 @@ on:
           - coexistence-failure
           - coexistence-cancel
           - coexistence-conditional
+          - coexistence-diagnostic
   pull_request:
     branches:
       - main
