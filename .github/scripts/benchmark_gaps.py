@@ -58,7 +58,9 @@ def network(root, kind):
 
     (root / "gap-rules-before.json").write_text(json.dumps(diagnostics(), indent=2))
     if kind == "gap-udp":
+        request("pinned-allowed-before-dns", "https://example.org/", True, pinned=True)
         request("allowed-https", "https://example.org/", True)
+        request("pinned-allowed-after-dns", "https://example.org/", True, pinned=True)
         records.extend((udp_probe(), udp_probe(connected=True)))
     elif kind == "privacy":
         request("allowed-https", "https://example.org/", True)

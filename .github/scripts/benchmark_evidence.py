@@ -1,6 +1,6 @@
 """Normalize native observations without confusing audit verdicts with enforcement."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from urllib.parse import urlparse
 
@@ -32,6 +32,13 @@ def matches(tool, probe, events):
             if target and identity and event.get("dst_port", port) == port:
                 result.append(event)
         elif tool == "stepsecurity":
+            if probe.get("started_at") is not None:
+                try:
+                    at = datetime.strptime(event[:29], "%a, %d %b %Y %H:%M:%S GMT").replace(tzinfo=timezone.utc).timestamp()
+                except ValueError:
+                    continue
+                if at + 1 <= probe["started_at"] or at > probe["finished_at"]:
+                    continue
             process = pid is not None and re.search(rf"\bpid[=:]\s*{pid}(?:,|\s|$)", event)
             dns = domain and re.search(rf"\bdomain={re.escape(domain)}\.(?:\s|$)", event)
             ips = set(probe.get("target_ips", []))

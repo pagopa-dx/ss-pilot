@@ -286,6 +286,7 @@ def markdown(report):
             dns = [check for check in item["checks"] if check["command"][0] == "getent"]
             https = [check for check in item["checks"] if check["command"][0] == "curl"]
             lines.append(f"| {item['job']} | {sum(check['exit_code'] == 0 for check in dns)}/{len(dns)} | {sum(check['exit_code'] == 0 for check in https)}/{len(https)} |")
+        lines.extend(["", "Totals include allowed and excluded hosts. A guard may deliberately remain active after its post step; excluded-host failure is not itself a cleanup defect. Inspect the allowed example.org control separately."])
     lines.extend(["", "## Performance by matched environment", "", "| Tool | Mode | Cache | Samples | Median build seconds | Median install seconds | Image / CPU |", "| --- | --- | --- | --- | --- | --- | --- |"])
     for sample in report["performance"]:
         lines.append(f"| {sample['tool']} | {sample['mode']} | {sample['cache']} | {sample['samples']} | {sample['metrics']['wall_seconds']['median']:.2f} | {sample['metrics']['install_seconds']['median']:.2f} | {sample['environment'][0]} / {sample['environment'][2]} |")

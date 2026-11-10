@@ -128,6 +128,12 @@ class BenchmarkTests(unittest.TestCase):
         for wrong in (line.replace("pid=42 ", "pid=420 "), line.replace("port=80 ", "port=443 "), line.replace("172.66.157.237", "104.20.26.136")):
             self.assertEqual(matches("stepsecurity", probe, [wrong]), [])
 
+    def test_step_reused_probe_pid_requires_its_own_time_interval(self):
+        probe = {"domain": "example.com", "pid": 42, "started_at": 103.2, "finished_at": 106.3}
+        prior = "Thu, 01 Jan 1970 00:01:40 GMT:[dns-request-dropped] pid=42 domain=example.com. matchedPolicy=NONE"
+        own = prior.replace("00:01:40", "00:01:44")
+        self.assertEqual(matches("stepsecurity", probe, [prior, own]), [own])
+
     def test_no_transport_error_alone_proves_blocking(self):
         probe = {"case": "excluded-https", "allowed": False, "reached": False}
         self.assertEqual(classify("field-cage", "block", probe, True, [])[0], "inconclusive")
