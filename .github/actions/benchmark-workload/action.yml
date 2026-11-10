@@ -14,9 +14,14 @@ runs:
       run: python3 .github/scripts/benchmark_runner.py run
 
     - name: Inject guard process exit on this ephemeral runner
-      if: ${{ env.BENCHMARK_KIND == 'agent-exit' }}
+      if: ${{ env.BENCHMARK_KIND == 'agent-exit' || env.BENCHMARK_KIND == 'agent-exit-during' }}
       shell: bash
       run: python3 .github/scripts/benchmark_runner.py fault
+
+    - name: Exercise targeted coverage or controlled telemetry comparison
+      if: ${{ startsWith(env.BENCHMARK_KIND, 'gap-') || env.BENCHMARK_KIND == 'privacy' }}
+      shell: bash
+      run: python3 .github/scripts/benchmark_runner.py run
 
     - name: Inject workload timeout
       if: ${{ env.BENCHMARK_KIND == 'timeout' }}

@@ -12,6 +12,7 @@ on:
           - smoke
           - full
           - cancellation
+          - gaps
   pull_request:
     branches:
       - main

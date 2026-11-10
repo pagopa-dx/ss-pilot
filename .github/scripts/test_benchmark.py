@@ -82,6 +82,27 @@ class BenchmarkTests(unittest.TestCase):
                     count += len(json.loads(values["baseline"])["include"])
                 self.assertEqual(count, expected)
 
+    def test_gap_plan_keeps_hardware_and_isolates_telemetry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
+                plan("gaps")
+            values = {key: json.loads(value)["include"] for key, value in
+                      (line.split("=", 1) for line in output.read_text().splitlines())}
+            self.assertEqual(sum(len(values[key]) for key in ("baseline", "field_cage", "cargowall", "stepsecurity")), 45)
+            privacy = [case for case in values["stepsecurity"] if case["kind"] == "privacy"]
+            self.assertEqual({(case["mode"], case["telemetry"]) for case in privacy},
+                             {("audit", "on"), ("audit", "off"), ("block", "on"), ("block", "off")})
+            self.assertFalse(any(case["kind"].startswith("agent-exit") for case in values["stepsecurity"]))
+
+    def test_step_packet_denial_requires_exact_process_address_and_port(self):
+        probe = {"url": "http://example.org/", "pid": 42, "target_ips": ["172.66.157.237"]}
+        line = "[net-dropped] ip=172.66.157.237 port=80 pid=42 exe=/usr/bin/curl matchedPolicy=NONE"
+        self.assertEqual(matches("stepsecurity", probe, [line]), [line])
+        self.assertTrue(denied("stepsecurity", [line], "block"))
+        for wrong in (line.replace("pid=42 ", "pid=420 "), line.replace("port=80 ", "port=443 "), line.replace("172.66.157.237", "104.20.26.136")):
+            self.assertEqual(matches("stepsecurity", probe, [wrong]), [])
+
     def test_no_transport_error_alone_proves_blocking(self):
         probe = {"case": "excluded-https", "allowed": False, "reached": False}
         self.assertEqual(classify("field-cage", "block", probe, True, [])[0], "inconclusive")

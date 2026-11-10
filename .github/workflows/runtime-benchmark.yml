@@ -10,12 +10,18 @@ on:
 permissions:
   contents: read
 
+env:
+  BENCHMARK_PROFILE: ${{ inputs.profile }}
+
 jobs:
   plan:
     runs-on: ubuntu-24.04
     outputs:
       baseline: ${{ steps.plan.outputs.baseline }}
       guards: ${{ steps.plan.outputs.guards }}
+      field_cage: ${{ steps.plan.outputs.field_cage }}
+      cargowall: ${{ steps.plan.outputs.cargowall }}
+      stepsecurity: ${{ steps.plan.outputs.stepsecurity }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -44,7 +50,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@d5e8897e7041df7657156091e71d3992e46116ef
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -67,11 +73,11 @@ jobs:
     needs: plan
     name: Benchmark field-cage ${{ matrix.mode }} ${{ matrix.kind }} ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.kind == 'agent-exit' && 4 || 15 }}
+    timeout-minutes: ${{ startsWith(matrix.kind, 'agent-exit') && 4 || 15 }}
     strategy:
       fail-fast: false
       max-parallel: 3
-      matrix: ${{ fromJSON(needs.plan.outputs.guards) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.field_cage) }}
     env:
       PILOT_DIR: /tmp/runtime-benchmark
       BENCHMARK_TOOL: field-cage
@@ -81,7 +87,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@d5e8897e7041df7657156091e71d3992e46116ef
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -135,11 +141,11 @@ jobs:
     needs: plan
     name: Benchmark cargowall ${{ matrix.mode }} ${{ matrix.kind }} ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.kind == 'agent-exit' && 4 || 15 }}
+    timeout-minutes: ${{ startsWith(matrix.kind, 'agent-exit') && 4 || 15 }}
     strategy:
       fail-fast: false
       max-parallel: 3
-      matrix: ${{ fromJSON(needs.plan.outputs.guards) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.cargowall) }}
     env:
       PILOT_DIR: /tmp/runtime-benchmark
       BENCHMARK_TOOL: cargowall
@@ -149,7 +155,7 @@ jobs:
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@d5e8897e7041df7657156091e71d3992e46116ef
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -202,28 +208,29 @@ jobs:
     needs: plan
     name: Benchmark stepsecurity ${{ matrix.mode }} ${{ matrix.kind }} ${{ matrix.iteration }}
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.kind == 'agent-exit' && 4 || 15 }}
+    timeout-minutes: ${{ startsWith(matrix.kind, 'agent-exit') && 4 || 15 }}
     strategy:
       fail-fast: false
       max-parallel: 3
-      matrix: ${{ fromJSON(needs.plan.outputs.guards) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.stepsecurity) }}
     env:
       PILOT_DIR: /tmp/runtime-benchmark
       BENCHMARK_TOOL: stepsecurity
       BENCHMARK_MODE: ${{ matrix.mode }}
       BENCHMARK_KIND: ${{ matrix.kind }}
       BENCHMARK_ITERATION: ${{ matrix.iteration }}
+      BENCHMARK_TELEMETRY_DISABLED: ${{ matrix.telemetry == 'off' || (matrix.telemetry != 'on' && matrix.mode == 'block') }}
     steps:
       - name: Observe setup and cleanup independently
         if: always()
-        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@d5e8897e7041df7657156091e71d3992e46116ef
+        uses: pagopa-dx/ss-pilot/.github/actions/benchmark-observer@26e353c116fb9430d4a4242c39f923541f6f2008
       - name: Start StepSecurity or inject an invalid policy
         id: guard
         continue-on-error: ${{ matrix.kind == 'startup-failure' }}
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: ${{ matrix.kind == 'startup-failure' && 'invalid-benchmark-policy' || matrix.mode }}
-          disable-telemetry: ${{ matrix.mode == 'block' }}
+          disable-telemetry: ${{ matrix.telemetry == 'off' || (matrix.telemetry != 'on' && matrix.mode == 'block') }}
           allowed-endpoints: >-
             nodejs.org:443
             registry.npmjs.org:443

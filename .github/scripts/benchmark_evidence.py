@@ -32,10 +32,14 @@ def matches(tool, probe, events):
             if target and identity and event.get("dst_port", port) == port:
                 result.append(event)
         elif tool == "stepsecurity":
-            if (
-                pid is not None and re.search(rf"\bpid[=:]\s*{pid}(?:,|\s|$)", event)
-                and domain and re.search(rf"\bdomain={re.escape(domain)}\.(?:\s|$)", event)
-            ):
+            process = pid is not None and re.search(rf"\bpid[=:]\s*{pid}(?:,|\s|$)", event)
+            dns = domain and re.search(rf"\bdomain={re.escape(domain)}\.(?:\s|$)", event)
+            ips = set(probe.get("target_ips", []))
+            if probe.get("ip"):
+                ips.add(probe["ip"])
+            destination = re.search(r"\bip=(\S+)\s+port=(\d+)\b", event)
+            packet = "[net-dropped]" in event and destination and destination[1] in ips and int(destination[2]) == port
+            if process and (dns or packet):
                 result.append(event)
     return result
 
@@ -50,7 +54,7 @@ def denied(tool, evidence, mode):
             and (mode == "block" or event.get("would_deny") is True)
             for event in evidence
         )
-    return any("[dns-request-dropped]" in line for line in evidence) if mode == "block" else any("[dns-request]" in line for line in evidence)
+    return any("[dns-request-dropped]" in line or "[net-dropped]" in line for line in evidence) if mode == "block" else any("[dns-request]" in line for line in evidence)
 
 
 def classify(tool, mode, probe, baseline_reached, evidence):

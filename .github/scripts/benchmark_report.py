@@ -48,7 +48,7 @@ def aggregate(root, jobs, profile):
     for record in records:
         if record["tool"] == "baseline":
             for probe in record.get("probes", []):
-                baseline[(probe["case"], record.get("image_version"))].append(probe.get("reached", False))
+                baseline[(probe["case"], record.get("image_version"), record["kind"])].append(probe.get("reached", False))
     cases, faults, performance = [], [], defaultdict(list)
     builds = []
     tier = []
@@ -67,10 +67,12 @@ def aggregate(root, jobs, profile):
             })
         for probe in record.get("probes", []):
             proof = matches(tool, probe, events)
-            controls = baseline.get((probe["case"], record.get("image_version")), [])
+            control_kind = "gap-allowed-first" if kind == "privacy" else kind
+            controls = baseline.get((probe["case"], record.get("image_version"), control_kind), [])
             status, reason = classify(tool, mode, probe, any(controls), proof)
             cases.append({
                 "tool": tool, "mode": mode, "iteration": record["iteration"], "case": probe["case"],
+                "kind": kind, "telemetry_disabled": record.get("telemetry_disabled"),
                 "status": status, "reason": reason, "reached": probe.get("reached"),
                 "baseline_successes": sum(controls), "baseline_samples": len(controls),
                 "native_evidence": proof[:8], "artifact": record["artifact"],
@@ -89,11 +91,11 @@ def aggregate(root, jobs, profile):
                     "install_seconds": resources["install"]["wall_seconds"],
                     "artifact": record["artifact"],
                 })
-        if kind in ("startup-failure", "agent-exit", "timeout", "cancellation"):
+        if kind in ("startup-failure", "agent-exit", "agent-exit-during", "timeout", "cancellation"):
             if kind == "startup-failure":
                 status = "passed" if record.get("startup_failed") and not record.get("workload_started") else "failed"
                 reason = "Invalid startup must fail and must not start the application" if status == "passed" else "Invalid configuration was accepted; an actual startup failure was not induced"
-            elif kind == "agent-exit":
+            elif kind.startswith("agent-exit"):
                 fault = record["fault"]
                 excluded = next((item for item in fault.get("probes", []) if not item["allowed"]), {})
                 if fault.get("injected") is False:
@@ -111,7 +113,7 @@ def aggregate(root, jobs, profile):
                 status = "passed" if record.get("waiting_marker") and record.get("job_status") == "cancelled" else "inconclusive"
                 reason = "Cancellation marker and GitHub cancellation state; inspect native post cleanup independently"
             fault_result = {"tool": tool, "kind": kind, "status": status, "reason": reason, "artifact": record["artifact"]}
-            if kind == "agent-exit":
+            if kind.startswith("agent-exit"):
                 fault_result["application_gate"] = "unsupported" if fault.get("injected") is False else "passed" if fault["guard_gate_rejected"] else "failed"
                 fault_result["residual_network_enforcement"] = "unsupported" if fault.get("injected") is False else "failed" if excluded.get("reached") else "inconclusive"
                 suffix = f"Benchmark {tool} {mode} {kind} {record['iteration']}"
@@ -119,6 +121,10 @@ def aggregate(root, jobs, profile):
                 fault_result["runner_reporting"] = "failed" if reporting_failed else "not observed failing"
                 if reporting_failed:
                     fault_result.update(status="failed", reason="Application gate rejected the dead agent, but DNS-dependent uploads/job completion failed; residual packet enforcement is not proven")
+                if fault.get("supervised_workload"):
+                    child = fault["supervised_workload"]
+                    fault_result["supervised_workload"] = child
+                    fault_result["workflow_mitigation"] = "passed" if child["alive_when_agent_loss_detected"] and child["exit_code"] < 0 and child["seconds_after_injection"] < 5 and fault["guard_gate_rejected"] else "inconclusive"
             faults.append(fault_result)
     measurements = []
     for (tool, mode, cache, environment), samples in sorted(performance.items(), key=lambda entry: str(entry[0])):
@@ -150,7 +156,16 @@ def aggregate(root, jobs, profile):
         })
     sizes = (1, 1) if profile == "smoke" else (3, 10)
     expected_keys = set()
-    if profile != "cancellation":
+    if profile == "gaps":
+        for kind in ("gap-excluded-first", "gap-allowed-first", "gap-pinned"):
+            for i in range(1, 4):
+                expected_keys.add(("baseline", "audit", kind, i))
+                expected_keys.update((tool, "block", kind, i) for tool in ("field-cage", "cargowall", "stepsecurity"))
+        for tool in ("field-cage", "cargowall"):
+            expected_keys.update((tool, "block", kind, 1) for kind in ("agent-exit", "agent-exit-during"))
+        expected_keys.update(("stepsecurity", mode, "privacy", i) for mode in ("audit", "block") for i in (1, 2))
+        expected_keys.add(("stepsecurity", "block", "startup-failure", 1))
+    elif profile != "cancellation":
         for kind, size in zip(("functional", "performance"), sizes):
             for iteration in range(1, size + 1):
                 expected_keys.add(("baseline", "audit", kind, iteration))
@@ -186,6 +201,16 @@ def aggregate(root, jobs, profile):
             "modes": modes,
             "limits": "DNS names identify observed destinations, not transmitted TLS payloads or all vendor IPs.",
         })
+    telemetry = []
+    for record in records:
+        if record["kind"] == "privacy":
+            suffix = f"Benchmark stepsecurity {record['mode']} privacy {record['iteration']}"
+            finals = [final for item in observers if item["job"].endswith(suffix) for final in item["records"]]
+            telemetry.append({
+                "mode": record["mode"], "telemetry_disabled": record.get("telemetry_disabled"),
+                "final_records": len(finals),
+                "vendor_dns_names": sorted({name for final in finals for name in final.get("vendor_dns_names", [])}),
+            })
     run_path = root / "run.json"
     run = json.loads(run_path.read_text()) if run_path.exists() else {}
     if run:
@@ -207,9 +232,11 @@ def aggregate(root, jobs, profile):
         "case_status_counts": dict(Counter(case["status"] for case in cases)),
         "performance": measurements, "cleanup": cleanup,
         "reporting_failures": reporting_failures, "completion_supervision": supervision,
+        "post_cleanup_connectivity": [{"job": item["job"], "checks": final["cleanup_connectivity"]} for item in observers for final in item["records"] if final.get("cleanup_connectivity")],
+        "telemetry_comparison": telemetry,
         "privacy": privacy,
         "stepsecurity_agent_builds": sorted(set(tier)),
-        "community_only_test": "inconclusive: the pinned action exposes no supported input to force the Community agent; no organization license or App was changed",
+        "community_only_test": "Enterprise is the accepted test target for this follow-up; Community differences are documentary, not an equivalence claim." if profile == "gaps" else "inconclusive: the pinned action exposes no supported input to force the Community agent; no organization license or App was changed",
         "limits": [
             "HTTP 403 is transport reachability, not a firewall denial.",
             "Each performance job has a fresh runner; cold install precedes a warm-store offline reinstall.",
@@ -233,9 +260,9 @@ def markdown(report):
     ]
     grouped = defaultdict(Counter)
     for case in report["cases"]:
-        grouped[(case["tool"], case["mode"], case["case"])][case["status"]] += 1
-    for (tool, mode, case), counts in sorted(grouped.items()):
-        lines.append(f"| {tool} | {mode} | {case} | " + " | ".join(str(counts[key]) for key in ("passed", "failed", "unsupported", "inconclusive")) + " |")
+        grouped[(case["tool"], case["mode"], case["kind"], case["case"])][case["status"]] += 1
+    for (tool, mode, kind, case), counts in sorted(grouped.items()):
+        lines.append(f"| {tool} | {mode} | {kind}: {case} | " + " | ".join(str(counts[key]) for key in ("passed", "failed", "unsupported", "inconclusive")) + " |")
     lines.extend(["", "## Fault cases", "", "| Tool | Fault | Status | Meaning |", "| --- | --- | --- | --- |"])
     for fault in report["faults"]:
         reason = fault["reason"].replace("\n", " ").replace("|", "\\|")
@@ -246,6 +273,16 @@ def markdown(report):
         lines.append("No job-completion reporting failure was observed.")
     if report["log_recovered_results"]:
         lines.append("Results recovered from job logs rather than uploaded raw artifacts: " + ", ".join(report["log_recovered_results"]) + ". Native/packet files may be unavailable.")
+    if report["telemetry_comparison"]:
+        lines.extend(["", "## Fixed-mode telemetry comparison", "", "| Mode | disable-telemetry | Final records | Vendor DNS names |", "| --- | --- | --- | --- |"])
+        for item in report["telemetry_comparison"]:
+            lines.append(f"| {item['mode']} | {item['telemetry_disabled']} | {item['final_records']} | {', '.join(item['vendor_dns_names'])} |")
+    if report["post_cleanup_connectivity"]:
+        lines.extend(["", "## Connectivity after native cleanup", "", "| Job | DNS successful / total | HTTPS successful / total |", "| --- | --- | --- |"])
+        for item in report["post_cleanup_connectivity"]:
+            dns = [check for check in item["checks"] if check["command"][0] == "getent"]
+            https = [check for check in item["checks"] if check["command"][0] == "curl"]
+            lines.append(f"| {item['job']} | {sum(check['exit_code'] == 0 for check in dns)}/{len(dns)} | {sum(check['exit_code'] == 0 for check in https)}/{len(https)} |")
     lines.extend(["", "## Performance by matched environment", "", "| Tool | Mode | Cache | Samples | Median build seconds | Median install seconds | Image / CPU |", "| --- | --- | --- | --- | --- | --- | --- |"])
     for sample in report["performance"]:
         lines.append(f"| {sample['tool']} | {sample['mode']} | {sample['cache']} | {sample['samples']} | {sample['metrics']['wall_seconds']['median']:.2f} | {sample['metrics']['install_seconds']['median']:.2f} | {sample['environment'][0]} / {sample['environment'][2]} |")
@@ -267,7 +304,7 @@ def markdown(report):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
-    parser.add_argument("--profile", choices=("full", "smoke", "cancellation"), required=True)
+    parser.add_argument("--profile", choices=("full", "smoke", "cancellation", "gaps"), required=True)
     parser.add_argument("--jobs", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()

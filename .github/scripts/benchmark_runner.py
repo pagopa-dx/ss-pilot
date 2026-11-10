@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import random
+import signal
 import subprocess
 import sys
 import time
@@ -38,6 +39,7 @@ def identity():
         "kernel": platform.release(),
         "cpu_count": os.cpu_count(),
         "cpu_model": model,
+        "telemetry_disabled": os.environ.get("BENCHMARK_TELEMETRY_DISABLED"),
     }
 
 
@@ -105,11 +107,23 @@ def plan(profile):
     guards.extend({"kind": kind, "iteration": 1, "mode": "block"} for kind in ("startup-failure", "agent-exit", "timeout"))
     if profile == "cancellation":
         guards = [{"kind": "cancellation", "iteration": 1, "mode": "block"}]
+    specific = {}
+    if profile == "gaps":
+        baseline = [{"kind": kind, "iteration": i, "mode": "audit"}
+                    for kind in ("gap-excluded-first", "gap-allowed-first", "gap-pinned") for i in range(1, 4)]
+        guards = [{**case, "mode": "block"} for case in baseline]
+        for tool in ("field_cage", "cargowall"):
+            specific[tool] = guards + [{"kind": kind, "iteration": 1, "mode": "block"} for kind in ("agent-exit", "agent-exit-during")]
+        specific["stepsecurity"] = guards + [
+            {"kind": "privacy", "iteration": i, "mode": mode, "telemetry": telemetry}
+            for mode in ("audit", "block") for i, telemetry in enumerate(("on", "off"), 1)
+        ] + [{"kind": "startup-failure", "iteration": 1, "mode": "block"}]
     seed = os.environ.get("GITHUB_SHA", "local")
     rng = random.Random(seed)
     rng.shuffle(baseline)
     rng.shuffle(guards)
     output = {"baseline": {"include": baseline}, "guards": {"include": guards}}
+    output.update({tool: {"include": specific.get(tool, guards)} for tool in ("field_cage", "cargowall", "stepsecurity")})
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
         for key, value in output.items():
             stream.write(f"{key}={json.dumps(value, separators=(',', ':'))}\n")
@@ -139,6 +153,12 @@ def run():
     context["started_at"] = time.time()
     save("context.json", context)
     save("workload-started.json", {"at": time.time()})
+    if context["kind"].startswith("gap-") or context["kind"] == "privacy":
+        from benchmark_gaps import network
+        network(ROOT, context["kind"])
+        guard_pid(context["tool"])
+        save("workload-finished.json", {"at": time.time()})
+        return
     cold = build(context["mode"], "cold")
     if context["kind"] == "performance" and cold:
         build(context["mode"], "warm")
@@ -154,11 +174,21 @@ def fault():
     context = identity()
     pid = guard_pid(context["tool"])
     save("context.json", {**context, "guard_pid": pid})
-    if context["kind"] != "agent-exit":
+    if context["kind"] not in ("agent-exit", "agent-exit-during"):
         raise ValueError("Unsupported shell-injected fault")
+    child = None
+    if context["kind"] == "agent-exit-during":
+        child = subprocess.Popen([sys.executable, "-u", "-c",
+            "import time; print('SYNTHETIC_WORKLOAD_READY', flush=True); time.sleep(60)"],
+            stdout=subprocess.PIPE, text=True, start_new_session=True)
+        if child.stdout.readline().strip() != "SYNTHETIC_WORKLOAD_READY":
+            raise ValueError("Synthetic supervised workload did not start")
     at = time.time()
     result = subprocess.run(["sudo", "kill", "-KILL", str(pid)], capture_output=True, text=True, timeout=5)
     if result.returncode:
+        if child:
+            os.killpg(child.pid, signal.SIGTERM)
+            child.wait(timeout=5)
         record = {
             "kind": "agent-exit", "injected": False, "original_pid": pid,
             "signal_error": result.stderr, "workload_started": False,
@@ -176,15 +206,25 @@ def fault():
         replacement = None
         rejected = True
         print(f"Guard gate rejected the unavailable agent: {error}")
+    supervised = None
+    if child:
+        alive_before_gate = child.poll() is None
+        os.killpg(child.pid, signal.SIGTERM)
+        child.wait(timeout=5)
+        supervised = {"pid": child.pid, "alive_when_agent_loss_detected": alive_before_gate,
+                      "exit_code": child.returncode, "stopped_at": time.time(),
+                      "seconds_after_injection": time.time() - at,
+                      "limits": "Bounded synthetic sleeping workload stopped by the benchmark supervisor, not native product fail-closed enforcement."}
     outcomes = [
         curl_probe("after-exit-allowed", "https://example.org/", [], True),
         curl_probe("after-exit-excluded", "https://example.com/", [], False),
     ]
     record = {
-        "kind": "agent-exit", "injected": True, "at": at, "original_pid": pid,
+        "kind": context["kind"], "injected": True, "at": at, "original_pid": pid,
         "guard_gate_rejected": rejected, "replacement_pid": replacement,
         "workload_started": False, "probes": outcomes,
         "limits": "Diagnostic probes intentionally run after the gate rejects the guard; the application workload does not.",
+        "supervised_workload": supervised,
     }
     save("fault.json", record)
     print("BENCHMARK_FAULT_RESULT " + json.dumps(record), flush=True)
@@ -202,7 +242,10 @@ def finalize():
     else:
         events = native.read_text().splitlines() if context["tool"] == "stepsecurity" else read_jsonl(native)
     report = {**context, "guard_outcome": os.environ.get("BENCHMARK_GUARD_OUTCOME"), "job_status": os.environ.get("BENCHMARK_JOB_STATUS")}
-    if context["kind"] in ("functional", "performance"):
+    if context["kind"].startswith("gap-") or context["kind"] == "privacy":
+        report["probes"] = json.loads((root / "probes.json").read_text())
+        report["completed"] = (root / "workload-finished.json").exists()
+    elif context["kind"] in ("functional", "performance"):
         report["phases"] = {}
         for cache in ("cold", "warm") if context["kind"] == "performance" else ("cold",):
             folder = root / cache
@@ -244,7 +287,7 @@ def finalize():
         report["completed"] = True
         report["startup_failed"] = report["guard_outcome"] == "failure"
         report["workload_started"] = (root / "workload-started.json").exists()
-    elif context["kind"] == "agent-exit":
+    elif context["kind"] in ("agent-exit", "agent-exit-during"):
         report["fault"] = json.loads((root / "fault.json").read_text())
         report["completed"] = True
     elif context["kind"] in ("timeout", "cancellation"):
@@ -273,7 +316,7 @@ def finalize():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("plan", "run", "fault", "finalize", "gate", "wait"))
-    parser.add_argument("--profile", default="full", choices=("full", "smoke", "cancellation"))
+    parser.add_argument("--profile", default="full", choices=("full", "smoke", "cancellation", "gaps"))
     args = parser.parse_args()
     if args.operation == "plan":
         plan(args.profile)
