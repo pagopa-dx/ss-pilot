@@ -3,6 +3,13 @@ description: Run the same DX-aligned fixture and validate positive/native contro
 runs:
   using: composite
   steps:
+    - name: Verify detector before bootstrap
+      if: ${{ env.PILOT_DETECTOR == 'enabled' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        id="$(python3 -c 'import json, os; from pathlib import Path; print(json.loads(Path(os.environ["RUNNER_TEMP"], "ss-pilot-falco-owner.json").read_text())["id"])')"
+        [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]] || { echo "::error::Falco is not running"; exit 1; }
     - name: Bootstrap controlled Node fixture
       uses: ./.github/actions/node-build-bootstrap
     - name: Start independent DNS capture
@@ -10,7 +17,13 @@ runs:
       run: bash .github/scripts/runtime-dns-capture.sh start "$PILOT_DIR"
     - name: Run the legitimate build and controlled dependency request
       shell: bash
-      run: bash .github/scripts/node-build-workload.sh "$PILOT_MODE" "$PILOT_DIR"
+      run: |
+        set -euo pipefail
+        if [[ "$PILOT_DETECTOR" == enabled ]]; then
+          id="$(python3 -c 'import json, os; from pathlib import Path; print(json.loads(Path(os.environ["RUNNER_TEMP"], "ss-pilot-falco-owner.json").read_text())["id"])')"
+          [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]] || { echo "::error::Falco is not running"; exit 1; }
+        fi
+        bash .github/scripts/node-build-workload.sh "$PILOT_MODE" "$PILOT_DIR"
     - name: Trigger a harmless detectable process
       shell: bash
       run: |
