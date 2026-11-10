@@ -22,6 +22,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: node --test .github/scripts/test_falco_lifecycle.cjs
+      - run: python3 -m unittest discover -s .github/scripts -p test_coexistence.py
       - name: Require the remote-action pin to match this implementation
         run: |
           git diff --exit-code bc8d0f2ea03bebc43ffa69b734f3f22fc48a37df -- \

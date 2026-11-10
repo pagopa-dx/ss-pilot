@@ -82,3 +82,35 @@ implementation under review.
 
 Rule selection, privileges, network access, support, privacy, supervision and
 the conditional pre-step behavior must be addressed before any rollout.
+
+## Reproduce the coexistence controls
+
+The existing Node build workflow dispatches an independent coexistence harness
+from the selected branch. It uses the fixture, bootstrap, workload and evidence
+helpers already on `main`; it does not require the general benchmark workflow.
+Run only on disposable GitHub-hosted runners:
+
+```shell
+gh workflow run node-build-pilot.yml --ref YOUR_BRANCH \
+  -f coexistence-profile=coexistence
+```
+
+The `coexistence` profile runs four separate jobs: baseline, firewall only,
+detector only, and the combined action. They check the controlled build and
+dependency request, and correlate the Falco marker to its PID when enabled.
+The workflow saves pre-cleanup evidence artifacts for seven days; review their
+contents and retention before using any non-synthetic workload.
+
+Additional profiles are `coexistence-failure`, `coexistence-cancel`,
+`coexistence-conditional`, and `coexistence-diagnostic`. The failure profile
+deliberately fails two jobs; inspect their post steps rather than interpreting
+the red run as a regression. The cancellation profile waits for an explicit
+external cancellation after `PILOT_CANCEL_READY`; cancellation or hard runner
+termination can prevent cleanup. The conditional profile observes the known
+nested pre-step behavior. The diagnostic profile includes the upstream older
+image, which previously failed, so it may intentionally produce a failed job.
+
+The harness pins both remote actions to commits in this PR's history, while its
+local helpers come from the checked-out branch. Update those pins alongside
+the action and workflow test pins when revising the implementation. A passing
+control is an observation for that runner and workload, not a rollout approval.

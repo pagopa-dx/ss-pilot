@@ -2,6 +2,18 @@ name: Representative Node build security pilot
 
 on:
   workflow_dispatch:
+    inputs:
+      coexistence-profile:
+        description: Run the existing Node pilot or an isolated coexistence profile
+        type: choice
+        default: none
+        options:
+          - none
+          - coexistence
+          - coexistence-failure
+          - coexistence-cancel
+          - coexistence-conditional
+          - coexistence-diagnostic
   pull_request:
     branches:
       - main
@@ -10,7 +22,14 @@ permissions:
   contents: read
 
 jobs:
+  coexistence:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.coexistence-profile != 'none' }}
+    uses: ./.github/workflows/runtime-coexistence.yml
+    with:
+      profile: ${{ inputs.coexistence-profile }}
+
   cargowall-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.coexistence-profile == 'none' }}
     name: Node build cargowall ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -72,6 +91,7 @@ jobs:
           mode: ${{ matrix.mode }}
 
   field-cage-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.coexistence-profile == 'none' }}
     name: Node build field-cage ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -126,6 +146,7 @@ jobs:
           mode: ${{ matrix.mode }}
 
   stepsecurity-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.coexistence-profile == 'none' }}
     name: Node build stepsecurity ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
