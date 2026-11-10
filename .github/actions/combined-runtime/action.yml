@@ -1,0 +1,36 @@
+name: Pilot combined firewall and runtime detection
+description: Experimental job-level StepSecurity and Falco combination; not a production action.
+inputs:
+  egress-policy:
+    description: StepSecurity egress policy, audit or block.
+    required: true
+  allowed-endpoints:
+    description: Inline StepSecurity endpoint allowlist.
+    required: false
+    default: ""
+  disable-telemetry:
+    description: StepSecurity event telemetry setting; this does not disable control-plane communication.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Start StepSecurity
+      uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+      with:
+        egress-policy: ${{ inputs.egress-policy }}
+        allowed-endpoints: ${{ inputs.allowed-endpoints }}
+        disable-telemetry: ${{ inputs.disable-telemetry }}
+    - name: Validate pilot settings
+      shell: bash
+      env:
+        PILOT_POLICY: ${{ inputs.egress-policy }}
+        PILOT_TELEMETRY: ${{ inputs.disable-telemetry }}
+      run: |
+        set -euo pipefail
+        [[ "$PILOT_POLICY" == audit || "$PILOT_POLICY" == block ]] || { echo "::error::Unsupported egress policy"; exit 1; }
+        [[ "$PILOT_TELEMETRY" == true || "$PILOT_TELEMETRY" == false ]] || { echo "::error::Invalid telemetry setting"; exit 1; }
+    - name: Start the pilot Falco engine and register cleanup
+      uses: pagopa-dx/ss-pilot/.github/actions/falco-lifecycle@7a69622ca5b5e530e9066a54731992b4a5984733
+      with:
+        rule-file: ${{ github.action_path }}/pilot-rules.yaml
