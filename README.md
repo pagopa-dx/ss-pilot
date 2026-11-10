@@ -5,6 +5,11 @@ pilot on **GitHub-hosted Ubuntu**, with separate audit and block workflows.
 This adds protection to existing GitHub runners; it does not provision a
 StepSecurity runner pool.
 
+The later comparison accepts the organization's **selected Enterprise agent**
+as its test target. Community remains the initial pilot scope, not a claim that
+the Enterprise measurements also apply to the free tier. See the targeted
+follow-up below.
+
 ## Scope and prerequisites
 
 - Keep this repository **public** and GitHub Actions enabled. Community is free
@@ -541,6 +546,152 @@ supervisor requested force-cancellation, retain its run-specific observation
 with `--supervision PATH_TO_COMPLETION_SUPERVISION_JSON`; never force-close an
 active workload to manufacture a complete cohort. Results recovered only from
 logs explicitly lack the corresponding raw artifact files.
+
+## Targeted gap follow-up: 10 November 2026
+
+The follow-up keeps **GitHub-hosted `ubuntu-24.04` unchanged**, without selecting
+different hardware, changing App/licenses, or adding infrastructure.
+StepSecurity **AgentAlpha v1.9.0**, commit
+`9e7591720a8bc192175636daf04587b2e74a48eb`, is the accepted Enterprise target.
+Community-only execution is no longer a prerequisite for this phase.
+No new performance ranking is inferred from these functional experiments.
+
+| Cohort | Runtime revision | Actual result |
+| --- | --- | --- |
+| [Targeted gaps, 42800523074](https://github.com/pagopa-dx/ss-pilot/actions/runs/42800523074) | `593e90368ee8954d0bcd1e292079cd8cef53ca85` | 45/45 results; 43 uploaded artifacts, two CargoWall crash results recovered from logs; **cancelled** after all actual sequences/posts finished |
+| [UDP socket contrast, 42800681518](https://github.com/pagopa-dx/ss-pilot/actions/runs/42800681518) | `c8b5ca20c9d87b3a42690ce6716dd93b2dd61c1b` | 4/4 results; **success** |
+| [DNS-priming crossover, 42801673072](https://github.com/pagopa-dx/ss-pilot/actions/runs/42801673072) | `6f20333768e04f84f2c360ebf152efc8ab5a4d06` | 4/4 results; **success** |
+| Warm shared-IP contrast: [42802597958](https://github.com/pagopa-dx/ss-pilot/actions/runs/42802597958), [42802839149](https://github.com/pagopa-dx/ss-pilot/actions/runs/42802839149), [42802846038](https://github.com/pagopa-dx/ss-pilot/actions/runs/42802846038) | `3fdc948ac13e4533140a82414d418a37d9d36aea` | 12/12 results over three fresh-runner repetitions; all three runs **success** |
+
+All **65 valid case jobs** have healthy final independent observer records,
+without capture errors or destination-list truncation. An earlier 45-case
+attempt, [42800069985](https://github.com/pagopa-dx/ss-pilot/actions/runs/42800069985),
+hit the explicit 20 MB packet-text limit in one baseline job and is not the final
+privacy cohort. The corrected targeted observer retains all UDP, IPv4 TCP
+SYN/FIN/RST and IPv6 TCP, plus sampled socket metadata; it still has the same
+explicit size limit. Original full-profile capture is unchanged.
+
+The 45-case cohort alternates excluded-first, allowed-first and pre-resolved
+request variants, each on three fresh runners per tool/baseline. Its 260
+observations contain 212 passes and 48 intended-policy failures, not a security
+score. Local-source review and focused contrasts clarify the failures:
+
+| Requirement / experiment | field-cage | CargoWall offline | StepSecurity Enterprise |
+| --- | --- | --- | --- |
+| Exact hostname on shared CDN IP, all nine order/address variants | Subdomain reached 9/9 | Subdomain reached 9/9; rules include subdomains | Subdomain denied with native proof 9/9 |
+| Excluded port 80 on an allowed host | Reached 9/9; ports not expressible | Native denial 9/9 | Native packet denial 9/9 |
+| Pre-resolved excluded HTTPS / direct-IP HTTP | Native denial 9/9 each | Native denial 9/9 each | Native packet denial 9/9 each |
+| Alternate DNS, unconnected UDP `sendto` | Reply received | Reply received | Native denial |
+| Same DNS destination, connected UDP `connect` + `send` | Native denial | Reply received | Native denial |
+| Allowed HTTPS pinned before normal guarded DNS | Succeeded | Succeeded | Denied in all three original pinned cases and the crossover |
+| Same pinned allowed address after ordinary allowed HTTPS | Succeeded | Succeeded | Succeeded in the crossover |
+| Excluded `www.example.org` pinned to a shared address after allowed DNS | Reached 3/3 | Reached 3/3 | Reached 3/3 |
+
+StepSecurity packet proof now requires native `[net-dropped]` evidence matching
+**PID, destination IP, port and probe interval**, together with an unprotected
+control. The old port/direct-IP inconclusives were an evidence-parser gap;
+the new cold pinned-address failure is a separate **allowed-traffic compatibility
+gap**. The crossover demonstrates DNS-learning dependence, not that every
+pre-resolved application is safe after an arbitrary warm-up.
+
+**Warm shared-IP changes the interpretation for all three tools.** After a normal
+request to allowed `example.org`, a pinned request to excluded
+`www.example.org` reaches the shared CDN address **3/3 times per guard**, including
+with StepSecurity. Each repetition has 17 passes and seven intended-policy
+failures over 24 observations, including the baseline controls.
+The nine earlier StepSecurity subdomain denials therefore do **not** establish
+hostname isolation when an allowed address has already been learned and DNS is
+bypassed. Native DNS records show the shared address learned for the allowed
+hostname. This is a gap relative to the intended exact-host policy, not an
+automatically established product vulnerability. Vendor guidance is needed on
+the supported policy boundary and handling of both allowed and excluded pinned
+traffic.
+
+field-cage's pinned
+[BPF source](https://github.com/takihito/field-cage/blob/b43cc7fd609580579cf9f233dc654fa1119aa220/internal/ebpf/bpf/block.c)
+enforces an IP allowlist using connect4/connect6 hooks, not hostname/port
+isolation or an unconnected UDP sendmsg hook. Allowed domains seed addresses
+at startup. `example.org` and `www.example.org` shared addresses in all nine
+cases, and changing request order or bypassing DNS did not remove the gap.
+A userspace hostname denial is not proof that the shared IP was blocked.
+The connected/unconnected contrast supports this model; it does not exhaust
+all protocols or bypasses.
+
+### Agent loss, cleanup and workflow-level mitigation
+
+Real before-workload and during-workload agent termination reproduced both
+local-first failure modes. field-cage allowed excluded diagnostic HTTPS after
+agent loss; its explicit stop/native posts left allowed DNS and HTTPS usable.
+CargoWall lost allowed DNS/HTTPS, artifact upload and completion reporting in
+both cases, including after native cleanup. The allowed post-cleanup control
+failed only in those two crash jobs.
+
+CargoWall's pinned
+[cleanup implementation](https://github.com/code-cargo/cargowall-action/blob/e5ed6c46902e295d7a791a15564056e9a3d1aafb/src/cleanup.ts)
+deliberately leaves its agent, DNS and BPF state until VM disposal. Therefore an
+excluded destination remaining blocked after a healthy post step is **not**
+a cleanup defect. A green native post does not establish crash recovery.
+The two crash jobs were force-closed only after all 45 actual case sequences
+and native posts finished; their log-recovered results and supervision records
+are explicitly labelled.
+
+For both tools, the benchmark supervisor detected agent loss while a bounded
+synthetic sleeping process was alive and terminated that process by SIGTERM
+about **2.015-2.018 seconds after injection**. This verifies our workflow-level
+mitigation, **not native fail-closed behavior or termination of a real build**.
+StepSecurity again accepted the invalid policy value: actual startup failure
+and supported agent-loss testing remain unverified.
+
+### Telemetry without the audit/block confound
+
+Four fresh-runner cases hold policy mode fixed while toggling the flag.
+The actual AgentAlpha configuration confirms the requested `DisableTelemetry`
+value in each case.
+
+| Mode | `disable-telemetry` | Observed StepSecurity DNS names |
+| --- | --- | --- |
+| audit | false | `agent.api.stepsecurity.io`, `prod.app-api.stepsecurity.io` |
+| audit | true | `agent.api.stepsecurity.io`, `prod.app-api.stepsecurity.io` |
+| block | false | `agent.api.stepsecurity.io`, `prod.app-api.stepsecurity.io` |
+| block | true | `agent.api.stepsecurity.io` |
+
+This is **one sample per combination**, including guard setup and native posts,
+not TLS payload inspection or proof that event upload is suppressed. Audit plus
+the flag does not demonstrate a vendor-egress opt-out; block plus the flag
+still has control-plane traffic. No StepSecurity/CodeCargo DNS names were
+observed for the local-first tools. None of these observations guarantees
+zero vendor communication.
+
+### Measured Enterprise versus documented Community
+
+The [pinned upstream README](https://github.com/step-security/harden-runner/blob/05e31511f85b41b11d1cf0ef85d0992719546e2c/README.md)
+documents Community network correlation, baseline/anomaly detection, domain
+egress blocking, Global Block List even in audit, and source-modification
+detection. Enterprise adds private/self-hosted coverage, dedicated GitHub
+Checks, GitHub API HTTPS visibility/token-permission recommendations and
+more detailed file/process observability. This is a **documentary comparison**,
+not feature equivalence demonstrated by the Enterprise benchmark.
+Community's public-only eligibility and documented 13,000-run weekly limit
+still apply; the documented quota aggregation scope remains unspecified.
+
+Reproduce the focused experiments without the performance suite:
+
+```sh
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot \
+  --ref YOUR_TEST_BRANCH -f benchmark=gaps
+gh workflow run node-build-pilot.yml --repo pagopa-dx/ss-pilot \
+  --ref YOUR_TEST_BRANCH -f benchmark=udp
+```
+
+`gaps` is the 45-case cohort; `udp` is the four-case socket/priming contrast.
+Collect/report each run separately with `--profile gaps` or `--profile udp`.
+Questions prepared, **not sent upstream**: supported StepSecurity pinned-address
+handling and warm shared-IP hostname isolation, invalid-policy validation, telemetry semantics by mode and safe
+startup/agent-loss tests; CargoWall crash/reporting recovery; field-cage
+shared-IP/port/unconnected-UDP support boundaries. Hostname semantics and fault
+handling still need acceptance or remediation before rollout. IPv6 without a
+working baseline, Container Apps, Azure export and organization-wide scale
+remain outside the demonstrated coverage.
 
 ## Future integration (not part of this pilot)
 
