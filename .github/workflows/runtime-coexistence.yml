@@ -232,3 +232,16 @@ jobs:
           done
           echo "::error::No matching native Falco event for marker PID $marker_pid"
           exit 1
+
+  diagnose-adapter:
+    if: ${{ inputs.profile == 'coexistence-diagnostic' }}
+    name: Diagnose the current lifecycle adapter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/falco-lifecycle
+        with:
+          rule-file: ${{ github.workspace }}/.github/actions/combined-runtime/pilot-rules.yaml
