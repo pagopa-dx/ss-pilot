@@ -130,7 +130,9 @@ def plan(profile):
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
         for key, value in output.items():
             stream.write(f"{key}={json.dumps(value, separators=(',', ':'))}\n")
-    print(json.dumps({"profile": profile, "seed": seed, "baseline_jobs": len(baseline), "guard_jobs_per_tool": len(guards)}))
+    print(json.dumps({"profile": profile, "seed": seed, "baseline_jobs": len(baseline),
+                      "guard_jobs_per_tool": {tool: len(output[tool]["include"])
+                                              for tool in ("field_cage", "cargowall", "stepsecurity")}}))
 
 
 def build(mode, cache):

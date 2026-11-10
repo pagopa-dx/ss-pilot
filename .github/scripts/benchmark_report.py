@@ -270,6 +270,12 @@ def markdown(report):
     for fault in report["faults"]:
         reason = fault["reason"].replace("\n", " ").replace("|", "\\|")
         lines.append(f"| {fault['tool']} | {fault['kind']} | {fault['status']} | {reason} |")
+    supervised = [fault for fault in report["faults"] if fault.get("supervised_workload")]
+    if supervised:
+        lines.extend(["", "## Workflow mitigation, not native enforcement", "", "| Tool | Native fault verdict | Supervisor mitigation | Seconds after injection |", "| --- | --- | --- | --- |"])
+        for fault in supervised:
+            lines.append(f"| {fault['tool']} | {fault['status']} | {fault['workflow_mitigation']} | {fault['supervised_workload']['seconds_after_injection']:.3f} |")
+        lines.extend(["", "The supervisor terminated a bounded synthetic sleeping process, not a representative build. This does not turn a failed native fault verdict into a pass."])
     lines.extend(["", "## Completion and evidence reliability", ""])
     lines.extend("- " + item["job"] + ": " + item["reason"] for item in report["reporting_failures"])
     if not report["reporting_failures"]:
@@ -281,11 +287,13 @@ def markdown(report):
         for item in report["telemetry_comparison"]:
             lines.append(f"| {item['mode']} | {item['telemetry_disabled']} | {item['final_records']} | {', '.join(item['vendor_dns_names'])} |")
     if report["post_cleanup_connectivity"]:
-        lines.extend(["", "## Connectivity after native cleanup", "", "| Job | DNS successful / total | HTTPS successful / total |", "| --- | --- | --- |"])
+        lines.extend(["", "## Connectivity after native cleanup", "", "| Job | Allowed DNS exit | Allowed HTTPS exit | All DNS successful / total | All HTTPS successful / total |", "| --- | --- | --- | --- | --- |"])
         for item in report["post_cleanup_connectivity"]:
             dns = [check for check in item["checks"] if check["command"][0] == "getent"]
             https = [check for check in item["checks"] if check["command"][0] == "curl"]
-            lines.append(f"| {item['job']} | {sum(check['exit_code'] == 0 for check in dns)}/{len(dns)} | {sum(check['exit_code'] == 0 for check in https)}/{len(https)} |")
+            allowed_dns = [check["exit_code"] for check in dns if check["command"][-1] == "example.org"]
+            allowed_https = [check["exit_code"] for check in https if check["command"][-1] == "https://example.org/"]
+            lines.append(f"| {item['job']} | {allowed_dns} | {allowed_https} | {sum(check['exit_code'] == 0 for check in dns)}/{len(dns)} | {sum(check['exit_code'] == 0 for check in https)}/{len(https)} |")
         lines.extend(["", "Totals include allowed and excluded hosts. A guard may deliberately remain active after its post step; excluded-host failure is not itself a cleanup defect. Inspect the allowed example.org control separately."])
     lines.extend(["", "## Performance by matched environment", "", "| Tool | Mode | Cache | Samples | Median build seconds | Median install seconds | Image / CPU |", "| --- | --- | --- | --- | --- | --- | --- |"])
     for sample in report["performance"]:

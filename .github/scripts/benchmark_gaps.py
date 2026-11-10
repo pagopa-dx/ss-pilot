@@ -61,6 +61,7 @@ def network(root, kind):
         request("pinned-allowed-before-dns", "https://example.org/", True, pinned=True)
         request("allowed-https", "https://example.org/", True)
         request("pinned-allowed-after-dns", "https://example.org/", True, pinned=True)
+        request("pinned-subdomain-after-dns", "https://www.example.org/", False, pinned=True)
         records.extend((udp_probe(), udp_probe(connected=True)))
     elif kind == "privacy":
         request("allowed-https", "https://example.org/", True)
