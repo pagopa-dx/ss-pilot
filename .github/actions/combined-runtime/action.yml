@@ -31,6 +31,6 @@ runs:
         [[ "$PILOT_POLICY" == audit || "$PILOT_POLICY" == block ]] || { echo "::error::Unsupported egress policy"; exit 1; }
         [[ "$PILOT_TELEMETRY" == true || "$PILOT_TELEMETRY" == false ]] || { echo "::error::Invalid telemetry setting"; exit 1; }
     - name: Start the pilot Falco engine and register cleanup
-      uses: pagopa-dx/ss-pilot/.github/actions/falco-lifecycle@839628daaa94c3e7c6e98593e2c69664025bc2ae
+      uses: pagopa-dx/ss-pilot/.github/actions/falco-lifecycle@c670e24c54a5440ff48a295ec542be92439992ef
       with:
         rule-file: ${{ github.action_path }}/pilot-rules.yaml
