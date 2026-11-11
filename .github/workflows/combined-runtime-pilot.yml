@@ -1,9 +1,9 @@
-name: Experimental combined runtime action
+name: Experimental StepSecurity and Falco action
 
 on:
   pull_request:
     paths:
-      - .github/actions/combined-runtime/**
+      - .github/actions/stepsecurity-falco/**
       - .github/actions/falco-lifecycle/**
       - .github/scripts/test_falco_lifecycle.cjs
       - .github/workflows/combined-runtime-pilot.yml
@@ -24,21 +24,20 @@ jobs:
       - run: node --test .github/scripts/test_falco_lifecycle.cjs
       - name: Require the remote-action pin to match this implementation
         run: |
-          git diff --exit-code bc8d0f2ea03bebc43ffa69b734f3f22fc48a37df -- \
-            .github/actions/combined-runtime/action.yml \
-            .github/actions/combined-runtime/pilot-rules.yaml \
+          git diff --exit-code fc630084c267d22b4290b66be223cb987e4012ee -- \
+            .github/actions/stepsecurity-falco/action.yml \
+            .github/actions/stepsecurity-falco/pilot-rules.yaml \
             .github/actions/falco-lifecycle
           git diff --exit-code 7a69622ca5b5e530e9066a54731992b4a5984733 -- \
             .github/actions/falco-lifecycle
 
-  remote-action:
+  default-block:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Start pinned remote composite
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@bc8d0f2ea03bebc43ffa69b734f3f22fc48a37df
+      - name: Start pinned remote composite with default block
+        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@fc630084c267d22b4290b66be223cb987e4012ee
         with:
-          egress-policy: block
           disable-telemetry: "true"
           allowed-endpoints: >-
             api.github.com:443 github.com:443
@@ -95,3 +94,56 @@ jobs:
           done
           echo "::error::No matching native Falco marker"
           exit 1
+
+  explicit-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start pinned remote composite in audit mode
+        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@fc630084c267d22b4290b66be223cb987e4012ee
+        with:
+          egress-policy: audit
+          disable-telemetry: "false"
+      - name: Verify the non-allowlisted request is observed and succeeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --noproxy '*' --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output /dev/null https://example.com/
+          for attempt in {1..10}; do
+            if sudo grep -E '\[dns-request\].*domain=example\.com\.' /home/agent/agent.log; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Missing native StepSecurity audit DNS evidence"
+          exit 1
+
+  missing-allowlist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: empty
+            endpoints: ""
+          - label: whitespace
+            endpoints: "   "
+    name: Reject ${{ matrix.label }} block allowlist
+    steps:
+      - name: Start pinned remote composite without an allowlist
+        id: guard
+        continue-on-error: true
+        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@fc630084c267d22b4290b66be223cb987e4012ee
+        with:
+          allowed-endpoints: ${{ matrix.endpoints }}
+          disable-telemetry: "true"
+      - name: Require failure before Falco startup
+        shell: bash
+        env:
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+        run: |
+          set -euo pipefail
+          [[ "$GUARD_OUTCOME" == failure ]] || { echo "::error::Expected validation failure"; exit 1; }
+          [[ ! -e "$RUNNER_TEMP/ss-pilot-falco-owner.json" ]] || { echo "::error::Falco started"; exit 1; }
