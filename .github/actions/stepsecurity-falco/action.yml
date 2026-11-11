@@ -1,9 +1,10 @@
-name: Pilot combined firewall and runtime detection
-description: Experimental job-level StepSecurity and Falco combination; not a production action.
+name: StepSecurity Harden-Runner and Falco runtime guard
+description: Experimental job-level StepSecurity egress control and Falco runtime detection.
 inputs:
   egress-policy:
-    description: StepSecurity egress policy, audit or block.
-    required: true
+    description: StepSecurity egress policy, audit or block; defaults to block.
+    required: false
+    default: block
   allowed-endpoints:
     description: Inline StepSecurity endpoint allowlist.
     required: false

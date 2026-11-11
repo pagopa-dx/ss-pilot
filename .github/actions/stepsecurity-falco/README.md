@@ -1,4 +1,4 @@
-# Experimental combined runtime action
+# Experimental StepSecurity Harden-Runner and Falco runtime guard
 
 **Pilot only: not approved or ready for rollout.** This action combines
 StepSecurity Harden-Runner egress control with a local Falco detector. It is
@@ -26,9 +26,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Start the experimental runtime guard
-        uses: pagopa-dx/ss-pilot/.github/actions/combined-runtime@<COMMIT_SHA>
+        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@<COMMIT_SHA>
         with:
-          egress-policy: block
           disable-telemetry: "true"
           allowed-endpoints: >-
             api.github.com:443 github.com:443
@@ -39,10 +38,13 @@ jobs:
       # Only run a controlled, non-sensitive workload here.
 ```
 
-The endpoints above are a starting point for the pilot, not a complete policy
-for an arbitrary job. Use a folded scalar for the space-separated allowlist.
-The inputs are `egress-policy` (`audit` or `block`), `allowed-endpoints`
-(optional), and `disable-telemetry` (`true` or `false`, default `true`).
+`egress-policy` defaults to `block` when omitted; set it explicitly to `audit`
+to select audit mode. **Block requires an appropriate `allowed-endpoints`
+allowlist for the entire job**, including actions, image downloads, and the
+workload. An empty or incomplete allowlist can disrupt the job. The endpoints
+above are a starting point for the pilot, not a complete policy for an
+arbitrary job. Use a folded scalar for the space-separated allowlist.
+The other input is `disable-telemetry` (`true` or `false`, default `true`).
 Disabling event telemetry does not disable control-plane communication. Audit
 mode can still enforce StepSecurity's Global Block List.
 
