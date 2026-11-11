@@ -1,0 +1,156 @@
+name: Experimental CI Runtime Security action
+
+on:
+  pull_request:
+    paths:
+      - .github/actions/ci-runtime-security/**
+      - .github/actions/falco-lifecycle/**
+      - .github/scripts/test_falco_lifecycle.cjs
+      - .github/workflows/combined-runtime-pilot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: node --test .github/scripts/test_falco_lifecycle.cjs
+      - name: Verify action input defaults
+        run: |
+          ruby -e '
+            require "yaml"
+            action = YAML.load_file(".github/actions/ci-runtime-security/action.yml")
+            abort "Unexpected egress-policy default" unless action.dig("inputs", "egress-policy", "default") == "block"
+            abort "Unexpected disable-telemetry default" unless action.dig("inputs", "disable-telemetry", "default") == "false"
+          '
+      - name: Require the remote-action pin to match this implementation
+        run: |
+          git diff --exit-code 64752d2d6fedc35519639373d4fe9399134c733f -- \
+            .github/actions/ci-runtime-security/action.yml \
+            .github/actions/ci-runtime-security/pilot-rules.yaml \
+            .github/actions/falco-lifecycle
+          git diff --exit-code 7a69622ca5b5e530e9066a54731992b4a5984733 -- \
+            .github/actions/falco-lifecycle
+
+  default-block:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start pinned remote composite with default settings
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@64752d2d6fedc35519639373d4fe9399134c733f
+        with:
+          allowed-endpoints: >-
+            api.github.com:443 github.com:443
+            *.githubusercontent.com:443 *.githubapp.com:443
+            *.blob.core.windows.net:443 *.trafficmanager.net:443
+            auth.docker.io:443 registry-1.docker.io:443
+            *.docker.io:443 *.docker.com:443
+      - name: Check allowed and denied traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --noproxy '*' --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output /dev/null https://api.github.com/zen
+          if curl --noproxy '*' --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+            --output /dev/null https://example.com/; then
+            echo "::error::Excluded destination remained reachable"
+            exit 1
+          else
+            status=$?
+            case "$status" in
+              6|7|28) echo "Expected network failure: curl exit $status" ;;
+              *) echo "::error::Unexpected curl error: $status"; exit 1 ;;
+            esac
+          fi
+          for attempt in {1..10}; do
+            if sudo grep -E '\[dns-request-dropped\].*domain=example\.com\.' /home/agent/agent.log; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Missing native StepSecurity DNS-denial evidence"
+          exit 1
+      - name: Check a new native Falco marker and detector liveness
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="$(python3 -c 'import json, os; from pathlib import Path; print(json.loads(Path(os.environ["RUNNER_TEMP"], "ss-pilot-falco-owner.json").read_text())["id"])')"
+          [[ "$(docker inspect --format '{{.State.Running}}' "$id")" == true ]]
+          marker_pid="$(python3 -c 'import os; print(os.getpid())' ss-pilot-controlled-marker)"
+          export PILOT_MARKER_PID="$marker_pid"
+          for attempt in {1..15}; do
+            if sudo cat /tmp/falco_events.json | python3 -c '
+          import json, os, sys
+          events = (json.loads(line) for line in sys.stdin if line.strip())
+          match = any(e.get("rule") == "SS Pilot Controlled Process Marker" and
+                      str(e.get("output_fields", {}).get("proc.pid")) == os.environ["PILOT_MARKER_PID"]
+                      for e in events)
+          sys.exit(0 if match else 1)
+          '; then
+              echo "Falco detected the controlled process PID $marker_pid"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::No matching native Falco marker"
+          exit 1
+
+  explicit-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start pinned remote composite in audit mode
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@64752d2d6fedc35519639373d4fe9399134c733f
+        with:
+          egress-policy: audit
+          disable-telemetry: "false"
+      - name: Verify the non-allowlisted request is observed and succeeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --noproxy '*' --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output /dev/null https://example.com/
+          for attempt in {1..10}; do
+            if sudo grep -E '\[dns-request\].*domain=example\.com\.' /home/agent/agent.log; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Missing native StepSecurity audit DNS evidence"
+          exit 1
+
+  missing-allowlist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: empty
+            endpoints: ""
+          - label: whitespace
+            endpoints: "   "
+    name: Reject ${{ matrix.label }} block allowlist
+    steps:
+      - name: Start pinned remote composite without an allowlist
+        id: guard
+        continue-on-error: true
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@64752d2d6fedc35519639373d4fe9399134c733f
+        with:
+          allowed-endpoints: ${{ matrix.endpoints }}
+          disable-telemetry: "true"
+      - name: Require failure before Falco startup
+        shell: bash
+        env:
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+        run: |
+          set -euo pipefail
+          [[ "$GUARD_OUTCOME" == failure ]] || { echo "::error::Expected validation failure"; exit 1; }
+          [[ ! -e "$RUNNER_TEMP/ss-pilot-falco-owner.json" ]] || { echo "::error::Falco started"; exit 1; }
