@@ -1,0 +1,18 @@
+name: Preserve benchmark evidence
+description: Collect local diagnostics without downloading actions after a fault.
+runs:
+  using: composite
+  steps:
+    - name: Collect native diagnostics
+      if: always()
+      shell: bash
+      run: |
+        mkdir -p "$PILOT_DIR"
+        if [[ "$BENCHMARK_TOOL" != baseline ]]; then
+          bash .github/scripts/collect-node-evidence.sh "$BENCHMARK_TOOL" "$PILOT_DIR"
+        fi
+
+    - name: Verify workload and retain machine-readable result
+      if: always()
+      shell: bash
+      run: python3 .github/scripts/benchmark_runner.py finalize

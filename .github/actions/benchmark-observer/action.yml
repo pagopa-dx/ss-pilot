@@ -1,0 +1,8 @@
+name: Observe the isolated benchmark runner
+description: Capture packet metadata and sampled sockets before guard setup through native cleanup.
+runs:
+  using: node24
+  pre: entry.cjs
+  main: main.cjs
+  post: post.cjs
+  post-if: always()

@@ -2,6 +2,18 @@ name: Representative Node build security pilot
 
 on:
   workflow_dispatch:
+    inputs:
+      benchmark:
+        description: Run the existing pilot or the explicitly requested comprehensive suite
+        type: choice
+        default: none
+        options:
+          - none
+          - smoke
+          - full
+          - cancellation
+          - gaps
+          - udp
   pull_request:
     branches:
       - main
@@ -10,7 +22,14 @@ permissions:
   contents: read
 
 jobs:
+  comprehensive:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark != 'none' }}
+    uses: ./.github/workflows/runtime-benchmark.yml
+    with:
+      profile: ${{ inputs.benchmark }}
+
   cargowall-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.benchmark == 'none' }}
     name: Node build cargowall ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -72,6 +91,7 @@ jobs:
           mode: ${{ matrix.mode }}
 
   field-cage-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.benchmark == 'none' }}
     name: Node build field-cage ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -126,6 +146,7 @@ jobs:
           mode: ${{ matrix.mode }}
 
   stepsecurity-build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.benchmark == 'none' }}
     name: Node build stepsecurity ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

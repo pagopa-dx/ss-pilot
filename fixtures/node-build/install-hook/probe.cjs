@@ -8,6 +8,7 @@ if (!resultPath) {
 }
 
 let completed = false;
+const startedAt = new Date().toISOString();
 function finish(result) {
   if (completed) return;
   completed = true;
@@ -15,6 +16,7 @@ function finish(result) {
   const record = {
     domain: "example.com",
     pid: process.pid,
+    started_at: startedAt,
     observed_at: new Date().toISOString(),
     ...result,
   };
