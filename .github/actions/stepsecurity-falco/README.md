@@ -41,12 +41,19 @@ jobs:
 `egress-policy` defaults to `block` when omitted; set it explicitly to `audit`
 to select audit mode. **Block requires an appropriate `allowed-endpoints`
 allowlist for the entire job**, including actions, image downloads, and the
-workload. An empty or incomplete allowlist can disrupt the job. The endpoints
-above are a starting point for the pilot, not a complete policy for an
-arbitrary job. Use a folded scalar for the space-separated allowlist.
+workload. An empty or whitespace-only allowlist fails the action's validation;
+an incomplete allowlist can disrupt the job. The pinned upstream action warns
+that block with no allowed or denied endpoints configures no outbound rules for
+job steps. Our adapter does not expose a denylist. The nested pre-step runs
+before this validation and may already affect the runner. The endpoints above
+are a starting point for the pilot, not a complete policy for an arbitrary job.
+Use a folded scalar for the space-separated allowlist.
 The other input is `disable-telemetry` (`true` or `false`, default `true`).
-Disabling event telemetry does not disable control-plane communication. Audit
-mode can still enforce StepSecurity's Global Block List.
+Disabling event telemetry does not disable control-plane communication. Per
+[StepSecurity's documentation](https://docs.stepsecurity.io/github-actions/harden-runner/workflow-runs#disable-telemetry-in-block-mode),
+the flag applies to Community; Enterprise customers should not use it, and
+self-hosted and Custom VM deployments always send telemetry regardless of the
+flag. Audit mode can still enforce StepSecurity's Global Block List.
 
 The composite references the lifecycle adapter at a separate immutable commit
 in this PR's history. Update that pin when changing the adapter; copying only
