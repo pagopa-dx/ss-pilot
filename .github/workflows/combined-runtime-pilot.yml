@@ -1,9 +1,9 @@
-name: Experimental StepSecurity and Falco action
+name: Experimental CI Runtime Security action
 
 on:
   pull_request:
     paths:
-      - .github/actions/stepsecurity-falco/**
+      - .github/actions/ci-runtime-security/**
       - .github/actions/falco-lifecycle/**
       - .github/scripts/test_falco_lifecycle.cjs
       - .github/workflows/combined-runtime-pilot.yml
@@ -26,15 +26,15 @@ jobs:
         run: |
           ruby -e '
             require "yaml"
-            action = YAML.load_file(".github/actions/stepsecurity-falco/action.yml")
+            action = YAML.load_file(".github/actions/ci-runtime-security/action.yml")
             abort "Unexpected egress-policy default" unless action.dig("inputs", "egress-policy", "default") == "block"
             abort "Unexpected disable-telemetry default" unless action.dig("inputs", "disable-telemetry", "default") == "false"
           '
       - name: Require the remote-action pin to match this implementation
         run: |
-          git diff --exit-code 6d3b6e841638999e51357fae126f31973d5a4d00 -- \
-            .github/actions/stepsecurity-falco/action.yml \
-            .github/actions/stepsecurity-falco/pilot-rules.yaml \
+          git diff --exit-code 64752d2d6fedc35519639373d4fe9399134c733f -- \
+            .github/actions/ci-runtime-security/action.yml \
+            .github/actions/ci-runtime-security/pilot-rules.yaml \
             .github/actions/falco-lifecycle
           git diff --exit-code 7a69622ca5b5e530e9066a54731992b4a5984733 -- \
             .github/actions/falco-lifecycle
@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Start pinned remote composite with default settings
-        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@6d3b6e841638999e51357fae126f31973d5a4d00
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@64752d2d6fedc35519639373d4fe9399134c733f
         with:
           allowed-endpoints: >-
             api.github.com:443 github.com:443
@@ -107,7 +107,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Start pinned remote composite in audit mode
-        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@6d3b6e841638999e51357fae126f31973d5a4d00
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@64752d2d6fedc35519639373d4fe9399134c733f
         with:
           egress-policy: audit
           disable-telemetry: "false"
@@ -142,7 +142,7 @@ jobs:
       - name: Start pinned remote composite without an allowlist
         id: guard
         continue-on-error: true
-        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@6d3b6e841638999e51357fae126f31973d5a4d00
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@64752d2d6fedc35519639373d4fe9399134c733f
         with:
           allowed-endpoints: ${{ matrix.endpoints }}
           disable-telemetry: "true"
