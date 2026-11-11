@@ -1,4 +1,4 @@
-name: StepSecurity Harden-Runner and Falco runtime guard
+name: CI Runtime Security
 description: Experimental job-level StepSecurity egress control and Falco runtime detection.
 inputs:
   egress-policy:

@@ -1,4 +1,4 @@
-# Experimental StepSecurity Harden-Runner and Falco runtime guard
+# Experimental CI Runtime Security
 
 **Pilot only: not approved or ready for rollout.** This action combines
 StepSecurity Harden-Runner egress control with a local Falco detector. It is
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Start the experimental runtime guard
-        uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@<COMMIT_SHA>
+        uses: pagopa-dx/ss-pilot/.github/actions/ci-runtime-security@<COMMIT_SHA>
         with:
           allowed-endpoints: >-
             api.github.com:443 github.com:443
