@@ -28,7 +28,6 @@ jobs:
       - name: Start the experimental runtime guard
         uses: pagopa-dx/ss-pilot/.github/actions/stepsecurity-falco@<COMMIT_SHA>
         with:
-          disable-telemetry: "true"
           allowed-endpoints: >-
             api.github.com:443 github.com:443
             *.githubusercontent.com:443 *.githubapp.com:443
@@ -48,12 +47,19 @@ job steps. Our adapter does not expose a denylist. The nested pre-step runs
 before this validation and may already affect the runner. The endpoints above
 are a starting point for the pilot, not a complete policy for an arbitrary job.
 Use a folded scalar for the space-separated allowlist.
-The other input is `disable-telemetry` (`true` or `false`, default `true`).
-Disabling event telemetry does not disable control-plane communication. Per
+The other input is `disable-telemetry` (`true` or `false`, default `false`),
+so the example enables event telemetry. Sending event telemetry may disclose
+domains, IP addresses, and process information; review privacy and network
+access before use. Disabling event telemetry does not disable control-plane
+communication. Per
 [StepSecurity's documentation](https://docs.stepsecurity.io/github-actions/harden-runner/workflow-runs#disable-telemetry-in-block-mode),
 the flag applies to Community; Enterprise customers should not use it, and
 self-hosted and Custom VM deployments always send telemetry regardless of the
 flag. Audit mode can still enforce StepSecurity's Global Block List.
+
+A successful action or an insights link does not prove that events were
+ingested or visible in the StepSecurity portal. Check the actual run and job
+in the portal, including the controlled allowed and denied destinations.
 
 The composite references the lifecycle adapter at a separate immutable commit
 in this PR's history. Update that pin when changing the adapter; copying only
