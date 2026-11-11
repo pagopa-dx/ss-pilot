@@ -10,6 +10,11 @@ as its test target. Community remains the initial pilot scope, not a claim that
 the Enterprise measurements also apply to the free tier. See the targeted
 follow-up below.
 
+For the StepSecurity discovery, see the
+[focused benchmark and outstanding decisions](docs/benchmark-stepsecurity.md).
+The comparative experiments below remain historical controls and are outside
+the focused StepSecurity assessment.
+
 ## Scope and prerequisites
 
 - Keep this repository **public** and GitHub Actions enabled. Community is free
@@ -693,13 +698,14 @@ handling still need acceptance or remediation before rollout. IPv6 without a
 working baseline, Container Apps, Azure export and organization-wide scale
 remain outside the demonstrated coverage.
 
-## Experimental combined firewall and detector
+## Related experiment: combined firewall and detector
 
 The reusable-action prototype is being reviewed separately in
 [PR #4](https://github.com/pagopa-dx/ss-pilot/pull/4). Historical evidence for
 the four-control comparison remains in
 [run 42835664227](https://github.com/pagopa-dx/ss-pilot/actions/runs/42835664227);
 the prototype is experimental and is not approved for rollout.
+It is outside the scope of the StepSecurity-focused discovery.
 
 ## Future integration (not part of this pilot)
 
