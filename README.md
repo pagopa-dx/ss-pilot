@@ -15,9 +15,8 @@ StepSecurity runner pool.
 - Harden-Runner is the first step, pinned to the commit for `v2.21.0`.
   The workload makes unauthenticated HTTPS GET requests to `example.com:443`
   and `api.github.com:443`, discarding response bodies.
-- The audit workflow sends runtime telemetry to StepSecurity so its insights can be
-  inspected. The block workflow disables event telemetry but is not fully offline.
-  Do not add sensitive workloads or secrets to this pilot.
+- Both workflows send runtime telemetry to StepSecurity so their insights can
+  be inspected. Do not add sensitive workloads or secrets to this pilot.
 - Audit observes egress rather than applying a custom domain allowlist, but
   **StepSecurity's Global Block List remains enforced even in audit**.
 - The [Community quickstart](https://docs.stepsecurity.io/workspace/getting-started/quickstart-community-tier)
@@ -77,7 +76,7 @@ blocking works.
 ## Test custom egress blocking
 
 The **Harden-Runner Community block** workflow has one job on its own runner.
-Harden-Runner is first, with `egress-policy: block`, `disable-telemetry: true`,
+Harden-Runner is first, with `egress-policy: block`, `disable-telemetry: false`,
 and an inline allowlist containing only `api.github.com:443` for the workload.
 
 The positive control requests `https://api.github.com/zen` and must succeed.
@@ -97,41 +96,18 @@ evidence. If the evidence is unavailable, enforcement remains unverified.
 The test does not contact malicious domains, exercise the Global Block List,
 change the audit workflow's policy, or enable Enterprise GitHub Checks.
 
-## Test disabling event telemetry
+## Inspect block insights
 
-Only the block workflow sets `disable-telemetry: true`. Its inline allowlist and
-local enforcement should continue to work, while DNS and network event uploads
-are disabled. The audit workflow remains the telemetry-enabled control; the flag
-is not an event-telemetry opt-out in audit mode.
-
-Inspect the block job's effective configuration (`disable_telemetry: true`,
-`egress_policy: block`), the action's telemetry-disabled message, and the local
-agent block event. A missing dashboard link alone is not proof that no events
-were sent; dashboard access errors are not proof either.
-
-This is **not an offline mode or a zero-data guarantee**. In the pinned action,
-setup still calls StepSecurity's `/monitor` endpoint with repository/run context
-and job/correlation identifiers. The Community agent also has control-plane
-requests for subscription status, feature flags, and the Global Block List.
-An installed GitHub App has a separate data-access path unaffected by this flag.
-Previous telemetry is not deleted. Historical `community-pilot.yml` runs had
-two jobs; these new workflows do not share a run ID.
-
-Portal verification must distinguish the two workflow runs and attempts.
-For audit, open the link emitted by Harden-Runner and verify the expected events.
-For block, record the GitHub run ID and inspect whether StepSecurity lists that
-run or its metadata; do not infer that it must appear merely because setup calls
-the API. No new network events are expected with telemetry disabled. This comparison
-shows both a policy difference and a telemetry difference: it is not a comparison
-of allowed versus blocked events with telemetry enabled in both workflows.
-Without access
-to the portal or an independent HTTP trace, report configuration and enforcement
-as verified but event-upload suppression as source-supported, not independently
-measured. Raw agent events can still appear in GitHub Actions logs.
+The block workflow enables telemetry with `disable-telemetry: false`. After the
+job and its post step finish, open the security insights link emitted by
+Harden-Runner for that run. Verify the repository, run and job, then inspect
+network events for the allowed and blocked requests. Access may require login.
+The link, job result and local agent logs do not prove that events are visible in
+the portal; record what you can actually observe.
 
 ## Verify actual insights
 
-These dashboard checks apply to the telemetry-enabled audit job.
+These dashboard checks apply to the audit job.
 **A green action or successful HTTP requests are not sufficient.**
 
 1. Wait for the entire job, including Harden-Runner's post step, to finish.

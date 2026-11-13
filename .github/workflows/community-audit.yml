@@ -55,7 +55,7 @@ jobs:
 
           This audit workflow sends event telemetry. Compare it with the separate
           `Harden-Runner Community block` workflow run for the same commit,
-          which disables event telemetry while enforcing its inline allowlist.
+          which also sends telemetry while enforcing its inline allowlist.
           Record both run URLs; do not mix events from different runs or attempts.
           Audit still enforces StepSecurity's Global Block List.
           EOF
