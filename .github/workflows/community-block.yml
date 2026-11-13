@@ -18,7 +18,7 @@ jobs:
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: block
-          disable-telemetry: true
+          disable-telemetry: false
           allowed-endpoints: >
             api.github.com:443
 
@@ -63,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Community block workflow with telemetry disabled
+          ## Community block workflow with telemetry enabled
 
           | Workload endpoint | Policy | Request outcome |
           | --- | --- | --- |
@@ -76,11 +76,10 @@ jobs:
           `Harden-Runner Community audit` workflow run for the same commit
           successfully reaches example.com.
 
-          This workflow sets disable-telemetry: true with egress-policy: block.
-          Check the effective configuration and telemetry-disabled message.
-          Do not expect network events from this workflow in the dashboard;
-          the audit workflow supplies the telemetry-enabled comparison.
-          This is not offline mode: setup and control-plane requests may remain.
+          This workflow sets disable-telemetry: false with egress-policy: block.
+          After the post step, open the security insights link emitted by
+          Harden-Runner and inspect the network events for this run and job.
+          A link or a green job alone does not prove that events were recorded.
           Record both run URLs and distinguish events from run metadata.
 
           This tests an inline allowlist with harmless destinations, not
