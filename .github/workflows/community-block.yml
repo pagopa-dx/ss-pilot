@@ -1,16 +1,49 @@
-name: Harden-Runner Community block
+name: Harden-Runner direct IP diagnostic
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
 
 permissions: {}
 
 jobs:
-  community-block:
-    name: Community block on GitHub-hosted Ubuntu
+  audit:
+    name: Audit direct IP control
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      example_ip: ${{ steps.resolve.outputs.example_ip }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+          disable-telemetry: false
+
+      - name: Resolve example.com IPv4
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          ip=$(python3 -c 'import ipaddress, socket; addresses = sorted({item[4][0] for item in socket.getaddrinfo("example.com", 443, socket.AF_INET, socket.SOCK_STREAM) if ipaddress.ip_address(item[4][0]).is_global}); assert addresses, "No public IPv4 address returned"; print(addresses[0])')
+          echo "example_ip=$ip" >> "$GITHUB_OUTPUT"
+          echo "Resolved example.com IPv4: $ip"
+
+      - name: Verify direct HTTPS in audit
+        env:
+          EXAMPLE_IP: ${{ steps.resolve.outputs.example_ip }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --noproxy '*' --proto '=https' --tlsv1.2 \
+            --resolve "example.com:443:$EXAMPLE_IP" \
+            --fail --silent --show-error --connect-timeout 10 --max-time 20 \
+            --output /dev/null \
+            --write-out 'Audit example.com direct IP: remote=%{remote_ip} HTTP %{http_code}\n' \
+            https://example.com/
+
+  block:
+    name: Block direct IP test
+    needs: audit
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -18,7 +51,7 @@ jobs:
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: block
-          disable-telemetry: true
+          disable-telemetry: false
           allowed-endpoints: >
             api.github.com:443
 
@@ -26,63 +59,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --proto '=https' --tlsv1.2 \
-            --fail --silent --show-error \
-            --connect-timeout 10 --max-time 30 --retry 2 \
+          curl --noproxy '*' --proto '=https' --tlsv1.2 \
+            --fail --silent --show-error --connect-timeout 10 --max-time 20 \
             --output /dev/null \
-            --write-out "Allowed https://api.github.com/zen: HTTP %{http_code}\n" \
+            --write-out 'Allowed api.github.com: HTTP %{http_code}\n' \
             https://api.github.com/zen
 
-      - name: Verify disallowed HTTPS traffic fails
+      - name: Attempt direct HTTPS to disallowed IP
+        env:
+          EXAMPLE_IP: ${{ needs.audit.outputs.example_ip }}
         shell: bash
         run: |
           set -euo pipefail
-          if curl --proto '=https' --tlsv1.2 \
-            --silent --show-error \
-            --connect-timeout 10 --max-time 15 \
+          echo "Attempting example.com over direct IPv4 $EXAMPLE_IP (DNS bypassed)"
+          if curl --noproxy '*' --proto '=https' --tlsv1.2 \
+            --resolve "example.com:443:$EXAMPLE_IP" \
+            --silent --show-error --connect-timeout 10 --max-time 15 \
             --output /dev/null \
-            --write-out "Disallowed https://example.com/: HTTP %{http_code}\n" \
+            --write-out 'Block example.com direct IP: remote=%{remote_ip} HTTP %{http_code}\n' \
             https://example.com/; then
-            echo "::error::example.com is outside the allowlist but remained reachable."
+            echo "::error::Direct HTTPS unexpectedly succeeded."
             exit 1
           else
             result=$?
             case "$result" in
-              6|7|28)
-                echo "Expected transport failure for example.com: curl exit ${result}."
+              7|28)
+                echo "Direct HTTPS transport failed: curl exit $result."
                 ;;
               *)
-                echo "::error::Unexpected curl failure ${result}; inspect the logs."
+                echo "::error::Unexpected curl error $result."
                 exit 1
                 ;;
             esac
           fi
-
-      - name: Record block verification checklist
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
-          ## Community block workflow with telemetry disabled
-
-          | Workload endpoint | Policy | Request outcome |
-          | --- | --- | --- |
-          | api.github.com:443 | Allowed | HTTPS request succeeded |
-          | example.com:443 | Outside allowlist | Transport failure observed |
-
-          **A curl failure alone is not proof of enforcement.**
-          After Harden-Runner's post step completes, inspect its agent logs for
-          a block event for example.com. Cross-check that the separate
-          `Harden-Runner Community audit` workflow run for the same commit
-          successfully reaches example.com.
-
-          This workflow sets disable-telemetry: true with egress-policy: block.
-          Check the effective configuration and telemetry-disabled message.
-          Do not expect network events from this workflow in the dashboard;
-          the audit workflow supplies the telemetry-enabled comparison.
-          This is not offline mode: setup and control-plane requests may remain.
-          Record both run URLs and distinguish events from run metadata.
-
-          This tests an inline allowlist with harmless destinations, not
-          malicious domains or the Global Block List. No secrets or PR code are used.
-          EOF
